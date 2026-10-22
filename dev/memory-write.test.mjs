@@ -68,7 +68,10 @@ function preStep(sessionId, text) {
     { agent: { session: { header: { id: sessionId } } } },
     async () => ({
       kind: 'enter',
-      messages: [{ id: 'u-1', role: 'user', content: [{ type: 'text', text: `  ${text}  ` }] }],
+      messages: [
+        { id: 'sys-inject', role: 'user', content: [{ type: 'text', text: '注入的记忆文本' }], source: { kind: 'plugin:dsh-memory-center', form: 'recall' } },
+        { id: 'u-1', role: 'user', content: [{ type: 'text', text: `  ${text}  ` }], source: { kind: 'user' } },
+      ],
     }),
   )
 }

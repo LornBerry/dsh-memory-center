@@ -662,7 +662,10 @@ function dedupeKey(item) {
 function sessionTitleFrom(messages) {
   if (!Array.isArray(messages)) return ''
   for (const message of messages) {
-    if (message?.role !== 'user' || message?.source?.kind) continue
+    if (message?.role !== 'user') continue
+    // DSH 的用户消息带 source.kind === 'user'；插件注入、工具结果等不是用户说的，跳过。
+    const kind = message?.source?.kind
+    if (kind !== undefined && kind !== 'user') continue
     const content = message.content
     const text =
       typeof content === 'string'
