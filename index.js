@@ -321,6 +321,22 @@ function seedState() {
       createdAt: nowIso(),
       updatedAt: nowIso(),
     },
+    {
+      // 新装首启的一次性引导：放「待确认」，不参与注入，用户看完随手删掉也不会
+      // 丢掉绑定入口——「云端同步」按钮独立在面板工具栏和设置页里，不依赖这一条。
+      id: `m-${randomUUID().slice(0, 8)}`,
+      title: '跨设备记忆需要开同步',
+      body: '想让多台设备共用同一份记忆，得先绑定云端同步：记忆面板（或 设置 → 记忆库）工具栏点「云端同步」，选 Git 仓库或 WebDAV 网盘保存即可。不绑定也完全能用，记忆只留在这台机器。这条只是首装提醒，转正或删除都随意——「云端同步」入口一直都在，删了它也能随时回去绑。',
+      tags: ['同步'],
+      groupId: null,
+      enabled: true,
+      pinned: false,
+      status: 'pending',
+      source: 'manual',
+      order: 2,
+      createdAt: nowIso(),
+      updatedAt: nowIso(),
+    },
   )
   return state
 }

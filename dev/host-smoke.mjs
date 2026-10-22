@@ -88,6 +88,11 @@ const moved = await call('POST', { op: 'config.set', dir: target, move: false })
 expect('config.set ok', moved.body.ok, (v) => v === true, moved.body.error || '切换失败')
 expect('切换后 dataDir = 目标', moved.body.dataDir, (v) => path.resolve(v) === path.resolve(target), '未生效')
 expect('切换后 items 有种子', moved.body.items?.length, (v) => v >= 2, '空目录应建种子')
+const seeded = moved.body.items || []
+const syncHint = seeded.find((item) => item.title === '跨设备记忆需要开同步')
+expect('新库种子含「跨设备记忆需要开同步」', Boolean(syncHint), (v) => v === true, '首装应留一条跨设备提醒')
+expect('跨设备提醒在待确认', syncHint && syncHint.status, (v) => v === 'pending', '应为 pending，不参与注入')
+expect('跨设备提醒未归类', syncHint && syncHint.groupId, (v) => v === null, 'groupId 应为 null（未归类）')
 
 // 3) 配置记住新位置（目标目录 + 旧指针各一份，指向同一个新路径）
 for (const file of [path.join(target, 'config.json'), pointer]) {
