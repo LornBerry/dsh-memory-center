@@ -6,7 +6,14 @@
 
 1. **每次改动都要提交并推送**：改完代码 → `git add -A && git commit -m "..." && git push`。
    用户明确要求：“每次改动都得推送哦”，本仓库不允许留下未提交/未推送的改动。
-2. 用户是中文交流，回复用中文；专业性优先，不要堆砌客套。
+2. **推送之后再看插件市场要不要动**：市场条目是 `awesome-dsh-plugin/awesome-dsh-plugin`
+   仓库里的 `data/plugins/LornBerry__dsh-memory-center.yml`，只有这些内容会进市场：
+   `url` / `name` / `category` / `description.en` / `description.zh`。
+   - 只改代码/文档 → 市场不用动（市场只存元数据，不存代码）。
+   - 改了**包名、仓库地址、分类、一句话简介**（或功能范围变化到描述已不准确）→ 必须同步市场：
+     fork 里改那一个 yml → 提一个只改该文件的 PR（README 由市场仓库脚本生成，不要手改）。
+   - 描述必须如实，不允许加“最好用”之类的宣传语。
+3. 用户是中文交流，回复用中文；专业性优先，不要堆砌客套。
 
 ## 本目录就是真值
 
@@ -33,12 +40,16 @@
 node --check index.js
 node --check client.js
 node dev/smoke-client.mjs   # 期望输出 SMOKE OK
+node dev/paths.test.mjs     # 打印数据目录探测链
 ```
 
 `dev/smoke-client.mjs` 是一个不依赖浏览器/react 的微型渲染器，会渲染各插槽组件并断言注册拓扑与关键文案。
 
 ## 数据位置
 
-- 记忆数据：默认 `E:\dsh-data\memory\`（`store.json` / `sessions.json`），可在面板「存储位置」里改。
-- 插件自身配置：`E:\dsh-data\memory-center\config.json`（记录用户选定的数据目录）。
-- 不要把任何记忆数据写进仓库或 C 盘。
+- 记忆数据：**自动探测**，不写死盘符。顺序见 `lib/paths.js`：
+  `DSH_MEMORY_DIR` → 配置文件里的选择 → 已存在 `store.json` 的老目录 → `<DSH_HOME>/memory` →
+  各盘符 `<盘符>:\dsh-data\memory` → `~/.dsh/memory` → 临时目录兜底。
+  本机 DSH 数据根在 E 盘，所以探测结果是 `E:\dsh-data\memory`，但这不是硬编码。
+- 插件自身配置：`<DSH_HOME>\memory-center\config.json`（记录用户选定的数据目录）。
+- 不要把任何记忆数据写进仓库；也不要为了「能跑」给某台机器硬编码路径。

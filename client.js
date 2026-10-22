@@ -14,7 +14,6 @@ window.__ModuleLoader__.load({
 
     const PANEL_ID = 'memory'
     const API = '/dsh-memory/api'
-    const DEFAULT_DATA_DIR_LABEL = 'E:\\dsh-data\\memory'
 
     /* ---------------------------------------------------------------- css */
 
@@ -779,7 +778,10 @@ window.__ModuleLoader__.load({
                   'button',
                   {
                     className: 'dmc-btn',
-                    onClick: () => setDir((info && info.defaultDir) || DEFAULT_DATA_DIR_LABEL),
+                    title: info && info.defaultDir ? `默认目录：${info.defaultDir}` : '默认目录暂不可用',
+                    onClick: () => {
+                      if (info && info.defaultDir) setDir(info.defaultDir)
+                    },
                   },
                   '恢复默认',
                 ),

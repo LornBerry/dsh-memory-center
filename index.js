@@ -5,7 +5,8 @@
  * decision, the browser JSON API (`POST /dsh-memory/api`), the two model-facing
  * tools and the `agent/pre-step` injection.
  *
- * Storage: one JSON file per concern under `E:\dsh-data\memory\`:
+ * Storage: one JSON file per concern in the memory data directory (auto-detected
+ * by ./lib/paths.js, overridable in the panel via 存储位置):
  *   store.json    — { version, groups[], items[] }
  *   sessions.json — { [sessionId]: { mode, groupIds, itemIds, decidedAt } }
  *
@@ -14,23 +15,32 @@
 import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
+import { canWriteDir, candidateDataDirs, pickDataDir } from './lib/paths.js'
 
 export const name = 'memory-center'
 export const inject = ['webServer']
 
 const ROUTE_PREFIX = '/dsh-memory'
-const DEFAULT_DATA_DIR = 'E:\\dsh-data\\memory'
-const CONFIG_FILE = process.env.DSH_MEMORY_CONFIG || 'E:\\dsh-data\\memory-center\\config.json'
+const CONFIG_ENV = process.env.DSH_MEMORY_CONFIG || ''
 const MAX_INJECT_CHARS = Number(process.env.DSH_MEMORY_MAX_CHARS || 12000)
 const PLUGIN_ID = 'dsh-memory-center'
 
 /**
  * 数据目录可以在面板里改，所以这些路径必须是变量而不是常量。
- * 优先级：环境变量 DSH_MEMORY_DIR > 配置文件里记住的选择 > 默认 E 盘。
+ * 优先级：环境变量 DSH_MEMORY_DIR > 数据目录里记住的选择 > 自动探测（见 lib/paths.js）。
+ *
+ * 配置文件放在数据目录内部（config.json），这样「记忆相关的文件」永远只在同一个
+ * 文件夹里，不会因为默认目录在 C 盘就往 C 盘写配置。
  */
-let DATA_DIR = process.env.DSH_MEMORY_DIR || DEFAULT_DATA_DIR
-let STORE_FILE = path.join(DATA_DIR, 'store.json')
-let SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json')
+let DATA_DIR = ''
+let STORE_FILE = ''
+let SESSIONS_FILE = ''
+let CONFIG_FILE = ''
+let autoDir = ''
+
+function configFileFor(dir) {
+  return path.join(dir, 'config.json')
+}
 
 function applyDataDir(dir) {
   DATA_DIR = dir
@@ -38,22 +48,60 @@ function applyDataDir(dir) {
   SESSIONS_FILE = path.join(dir, 'sessions.json')
 }
 
-async function loadConfig() {
-  if (process.env.DSH_MEMORY_DIR) return
+async function readConfigDir(file) {
   try {
-    const parsed = JSON.parse(await fs.readFile(CONFIG_FILE, 'utf8'))
+    const parsed = JSON.parse(await fs.readFile(file, 'utf8'))
     const dir = typeof parsed?.dataDir === 'string' ? parsed.dataDir.trim() : ''
-    if (dir && path.isAbsolute(dir)) applyDataDir(dir)
+    return dir && path.isAbsolute(dir) ? dir : ''
   } catch {
-    /* 没有配置文件就用默认目录 */
+    return ''
   }
 }
 
+async function loadConfig() {
+  if (process.env.DSH_MEMORY_DIR) {
+    applyDataDir(path.resolve(process.env.DSH_MEMORY_DIR))
+    CONFIG_FILE = configFileFor(DATA_DIR)
+    return
+  }
+  if (CONFIG_ENV) {
+    // 显式指定的配置文件：即使它还不存在，后续选择也写回这里，不要改指向别处。
+    const dir = await readConfigDir(CONFIG_ENV)
+    applyDataDir(dir && (await canWriteDir(dir)) ? dir : await pickDataDir())
+    CONFIG_FILE = CONFIG_ENV
+    return
+  }
+  for (const file of candidateDataDirs().map(configFileFor)) {
+    const dir = await readConfigDir(file)
+    if (dir && (await canWriteDir(dir))) {
+      applyDataDir(dir)
+      CONFIG_FILE = file
+      return
+    }
+  }
+  applyDataDir(await pickDataDir())
+  CONFIG_FILE = configFileFor(DATA_DIR)
+}
+
+async function defaultDataDir() {
+  if (!autoDir) autoDir = await pickDataDir()
+  return autoDir
+}
+
+/**
+ * 记住用户的选择。同时写回「上一个位置」的 config.json：否则老目录还在、老目录
+ * 又排在候选列表前面时，下次启动会被「已有 store.json」抢先把目录改回去。
+ */
 async function saveConfig(dir) {
-  await fs.mkdir(path.dirname(CONFIG_FILE), { recursive: true })
-  const temp = `${CONFIG_FILE}.${process.pid}.tmp`
-  await fs.writeFile(temp, `${JSON.stringify({ dataDir: dir }, null, 2)}\n`, 'utf8')
-  await fs.rename(temp, CONFIG_FILE)
+  const targets = new Set([configFileFor(dir)])
+  if (CONFIG_FILE) targets.add(CONFIG_FILE)
+  for (const target of targets) {
+    await fs.mkdir(path.dirname(target), { recursive: true })
+    const temp = `${target}.${process.pid}.tmp`
+    await fs.writeFile(temp, `${JSON.stringify({ dataDir: dir }, null, 2)}\n`, 'utf8')
+    await fs.rename(temp, target)
+  }
+  CONFIG_FILE = configFileFor(dir)
 }
 
 /**
@@ -214,8 +262,8 @@ function seedState() {
   state.items.push(
     {
       id: `m-${randomUUID().slice(0, 8)}`,
-      title: '记忆数据放在 E 盘',
-      body: '记忆库文件只写在 `E:\\dsh-data\\memory\\`，不要在 C 盘产生任何记忆数据。',
+      title: '记忆库是一个本地文件夹',
+      body: '记忆只存在本机的一个目录里，路径见「记忆」面板底部，可随时在「存储位置」里改到别处；不会写进项目代码目录。',
       tags: ['约束', '存储'],
       groupId,
       enabled: true,
@@ -485,7 +533,7 @@ async function runOp(op, payload) {
       return {
         ok: true,
         dataDir: DATA_DIR,
-        defaultDir: DEFAULT_DATA_DIR,
+        defaultDir: await defaultDataDir(),
         configFile: CONFIG_FILE,
         envLocked: Boolean(process.env.DSH_MEMORY_DIR),
       }

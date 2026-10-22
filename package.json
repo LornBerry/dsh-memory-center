@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory-center",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "用户可查看、编辑、分组、导入导出并逐会话决定是否加载的本地长期记忆库（DSH 插件）",
   "type": "module",
@@ -34,6 +34,7 @@
   "files": [
     "index.js",
     "client.js",
+    "lib/paths.js",
     "cordis.patch.yml",
     "icon.svg",
     "README.md",
