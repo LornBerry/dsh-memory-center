@@ -48,6 +48,7 @@
 ```bash
 node --check index.js
 node --check client.js
+node dev/encoding.test.mjs   # 无 BOM / 无 U+FFFD，package.json 合法（务必先跑，见下）
 node dev/smoke-client.mjs    # 期望输出 SMOKE OK
 node dev/paths.test.mjs      # 打印数据目录探测链
 node dev/host-smoke.mjs      # 宿主半 API 与目录切换（临时目录）
@@ -55,6 +56,16 @@ node dev/merge.test.mjs      # 两台设备的条目级合并规则
 node dev/sync.test.mjs       # WebDAV 后端（本地假服务器）
 node dev/sync-git.test.mjs   # Git 后端（本地裸仓库扮远端，模拟两台设备）
 ```
+
+### 写文件的编码纪律（踩过的坑，必须守）
+
+- **禁止**用 PowerShell 的 `>` / `>>` / `Set-Content` / `Out-File` / `Get-Content -Raw` 往返 UTF-8 文件：
+  Windows PowerShell 5.1 会写成 UTF-16 或带 BOM，中文变乱码，插件会直接消失。
+- 改文件只用 `write` / `edit` 工具，或用 Node 的 `fs.writeFileSync(path, text, 'utf8')`。
+- 一旦 `package.json` 带上 UTF-8 BOM，DSH 的插件管理器会报
+  `Unexpected token '\uFEFF' ... is not valid JSON`，插件从列表里变成 missing、面板整块消失。
+  出现这个症状先跑 `node dev/encoding.test.mjs`，再 `plugin_manager` 重新 `set_bundle` 启用一次。
+- 提交前跑一遍 `dev/encoding.test.mjs`，它是这类事故的唯一自动化防线。
 
 `dev/smoke-client.mjs` 是一个不依赖浏览器/react 的微型渲染器，会渲染各插槽组件并断言注册拓扑与关键文案。
 改完同步逻辑，至少跑 `merge.test.mjs` + `sync-git.test.mjs`：它们覆盖墓碑不复活、冲突取新、推送 fast-forward 三种易回归的情形。

@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 锚点（可选词条）自测：完全锚点 vs 仅权重。
  *
  *   node dev/anchor.test.mjs
