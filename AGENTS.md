@@ -22,6 +22,14 @@
 - `client.js` / `index.js` 改完 → 用户刷新 Web GUI 页面即生效；`index.js`（host 半）改动需**重启 DSH**。
 - 没有构建步骤：`index.js` 是 Node ESM（Host 半），`client.js` 是浏览器 bundle（`window.__ModuleLoader__.load`）。
 
+## 版本更替与恢复
+
+- 安装方式是 `link:`：任何宿主升级、市场刷新都不会覆盖本目录代码；市场也不会给 link 安装推在线更新（非桌面宿主生成的 `link:` 一律视为开发工作区）。
+- 宿主升级后先跑一遍「自测」，再打开面板看有没有渲染/接口报错；client 半依赖宿主 web API，宿主大版本升级时按报错适配。
+- 如果发现 `node_modules\dsh-memory-center` 不再是 junction（被换成了 npm 版真实目录），说明安装方式被换掉了：删掉该目录，重新 `New-Item -ItemType Junction` 指向本仓库，或在市场里按本地目录重装。
+- 发版：去掉 `package.json` 的 `"private": true` → `npm version patch` → `npm publish`；市场按 npm latest 展示。本地开发仍可继续用 link，两者互不影响。
+- 每次可见改动建议打 tag（如 `v0.2.0`）作为回滚点，tag 与提交一并推送。
+
 ## 本机网络注意（否则 push 一定失败）
 
 - 本机 DNS 把 `github.com` 解析到 `20.205.243.166`，该 IP 在本网络**不可达**（`api.github.com` 正常）。
@@ -32,6 +40,7 @@
   ```
 
   若 `git push` 报连接超时，先 `git config --get http.curloptResolve` 确认这条还在；没了就重新设。
+  140.82.112.3 有时也不通，可临时换 `-c http.curloptResolve=github.com:443:140.82.113.3`（或 `.114.3`）逐个试。
 - 需要直接访问 github.com 的 HTTP 接口时，用 `curl --resolve github.com:443:140.82.112.3 ...`。
 
 ## 自测

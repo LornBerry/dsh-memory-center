@@ -19,6 +19,16 @@ DSH 的「长期记忆」面板插件：**你自己看得见、改得动、决�
 
 3. 刷新 Web GUI：侧栏出现「记忆」，设置里出现「记忆库」。
 
+## 本地开发安装与升级
+
+本机现在用的是**开发安装**：profile 清单里是 `link:<仓库绝对路径>`，`node_modules\dsh-memory-center` 只是指向仓库的 junction。所以：
+
+- 改 `client.js` 刷新页面即生效，改 `index.js` 重启 DSH 生效；没有构建步骤。
+- **版本更替不会覆盖改动**：宿主升级、市场刷新都不动 link 安装；市场也不会给 link 安装推在线更新（它把任意非桌面生成的 `link:` 当作开发工作区）。
+- 唯一会失效的情况：有人把它装成 npm 版（junction 被替换成真实目录）。恢复：删掉 `node_modules\dsh-memory-center`，重新指向仓库建 junction，或在市场里按本地目录重装。
+- 真要发版：去掉 `package.json` 的 `"private": true`，`npm version patch` + `npm publish`；本地开发可以继续用 link 安装，互不影响。
+- 每次改完记得 `git add -A && git commit && git push`，并打 tag 作为回滚点。
+
 ## 你会看到什么
 
 | 位置 | 组件 | 作用 |
