@@ -778,6 +778,7 @@ async function runOp(op, payload) {
         defaultDir: await defaultDataDir(),
         configFile: CONFIG_FILE,
         envLocked: Boolean(process.env.DSH_MEMORY_DIR),
+        writable: await canWriteDir(DATA_DIR),
       }
 
     case 'config.set': {

@@ -15,20 +15,44 @@
    - 描述必须如实，不允许加“最好用”之类的宣传语。
 3. 用户是中文交流，回复用中文；专业性优先，不要堆砌客套。
 
-## 本目录就是真值
+## 本目录就是源码真值
 
-- `C:\Users\20408\.dsh\profiles\desktop` 的 `node_modules\dsh-memory-center` 是指向本目录的 **junction**，
-  所以本目录的代码就是运行时加载的代码。
-- `client.js` / `index.js` 改完 → 用户刷新 Web GUI 页面即生效；`index.js`（host 半）改动需**重启 DSH**。
+- 本目录是**源码**；profile 里的 `node_modules\dsh-memory-center` 是 `node dev/release.mjs` 打出的 tgz 的**固定副本**。
+- 也就是说：改完本目录 ≠ 线上生效，必须重新 `release.mjs` + `install_bundle`（见下一节）。
+- `client.js` / `index.js` 改完并重新安装 → 用户刷新 Web GUI 页面即生效；`index.js`（host 半）改动需**重启 DSH**。
 - 没有构建步骤：`index.js` 是 Node ESM（Host 半），`client.js` 是浏览器 bundle（`window.__ModuleLoader__.load`）。
 
-## 版本更替与恢复
+## 安装方式：固定副本（tgz），不是 link
 
-- 安装方式是 `link:`：任何宿主升级、市场刷新都不会覆盖本目录代码；市场也不会给 link 安装推在线更新（非桌面宿主生成的 `link:` 一律视为开发工作区）。
-- 宿主升级后先跑一遍「自测」，再打开面板看有没有渲染/接口报错；client 半依赖宿主 web API，宿主大版本升级时按报错适配。
-- 如果发现 `node_modules\dsh-memory-center` 不再是 junction（被换成了 npm 版真实目录），说明安装方式被换掉了：删掉该目录，重新 `New-Item -ItemType Junction` 指向本仓库，或在市场里按本地目录重装。
-- 发版：去掉 `package.json` 的 `"private": true` → `npm version patch` → `npm publish`；市场按 npm latest 展示。本地开发仍可继续用 link，两者互不影响。
-- 每次可见改动建议打 tag（如 `v0.2.0`）作为回滚点，tag 与提交一并推送。
+- profile 里 `node_modules\dsh-memory-center` **必须是一份真实目录副本**（从 tgz 解出来），不是指向本目录的 junction。
+- 为什么改（2026-10-23 事故）：早期用 `link:` 安装，工作区被清空/移动后 DSH 下次启动找不到插件，面板整块消失，市场里也显示 missing。
+  改成 tgz 固定副本后，工作区怎么动都不影响已装好的版本；代价是**改完必须重新打包安装**才会生效。
+- 发版/更新一条命令：`node dev/release.mjs`（自测 → 改版本 → 打包到 `E:\dsh-data\memory-center-dist` → 打印安装命令），
+  然后 `plugin_manager action=install_bundle target=<打印出来的 tgz>`。
+- 装完 `node dev/doctor.mjs --url <当前 Web 地址>` 复核：目录是真实副本、版本一致、四个核心文件哈希一致、接口 200、数据可写。
+- 本地开发时可以直接改本目录再跑 `release.mjs`；不要改 profile 里那份副本（会被下次安装覆盖）。
+- 宿主升级后先跑「自测」+ `doctor.mjs`，再打开面板看有没有渲染/接口报错；client 半依赖宿主 web API，宿主大版本升级时按报错适配。
+- 如果发现安装目录又变成 junction（有人手工重装成 link），删掉该目录后按 tgz 重装：
+  删除 junction 必须用 `[System.IO.Directory]::Delete($path, $false)`，**不要** `Remove-Item -Recurse`（会顺着链接把工作区删掉）。
+- 发 npm 包（可选）：去掉 `"private": true` → `npm version patch` → `npm publish`；市场按 npm latest 展示，与本地 tgz 安装互不影响。
+- 每次可见改动打 tag（`v0.4.0` 这样）作为回滚点，tag 与提交一并推送。
+
+## Git 元数据丢失时的恢复（2026-10-23 遇到过一次）
+
+- 症状：`git status` 报 `fatal: not a git repository`，但 `.git\objects` / `.git\refs` 里的对象还在（缺 `HEAD`/`config`/`index`）。
+- 恢复（不会改动工作区文件）：
+
+  ```powershell
+  git init
+  git remote add origin https://github.com/LornBerry/dsh-memory-center.git
+  git config http.curloptResolve github.com:443:140.82.112.3
+  git fetch origin main:refs/remotes/origin/main --tags
+  git reset origin/main      # 混合重置：索引对齐远端，文件不动
+  git status                 # 此时列出的就是你相对远端真正改过的东西
+  ```
+
+- 内存里有记忆库文件、但工作区是唯一代码副本：**先恢复 git 再决定提交什么**，不要 `git checkout -- .` 把未推送的改动冲掉。
+
 
 ## 本机网络注意（否则 push 一定失败）
 

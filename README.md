@@ -14,20 +14,29 @@ DSH 的「长期记忆」面板插件：**你自己看得见、改得动、决�
    git clone https://github.com/LornBerry/dsh-memory-center.git
    ```
 
-2. 用 DSH 的插件管理装它：`plugin_manager`，`action=install_bundle`，`target` 填上一步目录的绝对路径。
-   装完 profile 的 `package.json` 里会多一条 `link:` 依赖，之后改代码刷新页面即可生效。
+2. 打包成一份固定副本（自测 → 打 tgz）：`node dev/release.mjs`
+3. 用 DSH 的插件管理装这个 tgz：`plugin_manager`，`action=install_bundle`，`target` 填打印出来的 `.tgz` 绝对路径。
+   装完 profile 的 `package.json` 里是一条 `file:` 依赖，`node_modules/dsh-memory-center` 是一份**真实目录副本**。
+4. 自检一遍：`node dev/doctor.mjs --url http://127.0.0.1:<当前端口>`（核对副本、版本、哈希、接口、目录可写）。
+5. 刷新 Web GUI：侧栏出现「记忆」，设置里出现「记忆库」。
 
 3. 刷新 Web GUI：侧栏出现「记忆」，设置里出现「记忆库」。
 
-## 本地开发安装与升级
+## 更新与本地开发
 
-本机现在用的是**开发安装**：profile 清单里是 `link:<仓库绝对路径>`，`node_modules\dsh-memory-center` 只是指向仓库的 junction。所以：
+**装的是固定副本，不是软链**——这是有意的：先前用 `link:` 安装时，源码目录一旦被清空或移动，DSH 下次启动就找不到插件，面板整块消失（2026-10-23 真实发生过）。
 
-- 改 `client.js` 刷新页面即生效，改 `index.js` 重启 DSH 生效；没有构建步骤。
-- **版本更替不会覆盖改动**：宿主升级、市场刷新都不动 link 安装；市场也不会给 link 安装推在线更新（它把任意非桌面生成的 `link:` 当作开发工作区）。
-- 唯一会失效的情况：有人把它装成 npm 版（junction 被替换成真实目录）。恢复：删掉 `node_modules\dsh-memory-center`，重新指向仓库建 junction，或在市场里按本地目录重装。
-- 真要发版：去掉 `package.json` 的 `"private": true`，`npm version patch` + `npm publish`；本地开发可以继续用 link 安装，互不影响。
-- 每次改完记得 `git add -A && git commit && git push`，并打 tag 作为回滚点。
+更新是显式两步：
+
+```bash
+node dev/release.mjs            # 自测 + 升版本 + 打包，打印 install_bundle 的 target
+# 然后 plugin_manager action=install_bundle target=<新 tgz>
+```
+
+- `client.js` 改动重新安装后刷新页面即生效；`index.js`（宿主半）改动需重启 DSH。没有构建步骤。
+- 不要直接改 `node_modules/dsh-memory-center` 里那份副本，下次安装会被覆盖。
+- 想发 npm 包：去掉 `package.json` 的 `"private": true` → `npm version patch` → `npm publish`；市场按 npm latest 展示，与本地 tgz 安装互不影响。
+- 每次改完记得 `git add -A && git commit && git push`，并打 tag（如 `v0.4.1`）作为回滚点。
 
 ## 加固（v0.2.1）
 
@@ -132,7 +141,8 @@ DSH 的「长期记忆」面板插件：**你自己看得见、改得动、决�
 
 ## 开发与自测
 
-- 本包以 `link:` 方式装进 profile，改 `client.js` / `index.js` 后刷新页面即可（host 半改动需重启 DSH 生效）。
+- 装进 profile 的是 `dev/release.mjs` 打出的**固定副本**；改完源码要重新 `release.mjs` + `install_bundle` 才生效。
+- 一键发版：`node dev/release.mjs`（自测 → 升版本 → 打包 → 打印安装命令）；`node dev/doctor.mjs --url <端口>` 做安装/运行期自检。
 - 离线自测（不需要浏览器、不需要 react，Node 22+ 即可）：
 
   ```bash
@@ -148,6 +158,10 @@ DSH 的「长期记忆」面板插件：**你自己看得见、改得动、决�
   node dev/merge.test.mjs    # 两台设备的条目级合并规则
   node dev/sync.test.mjs     # WebDAV 后端（本地假服务器）
   node dev/sync-git.test.mjs # Git 后端（本地裸仓库扮远端，模拟两台设备）
+  node dev/anchor.test.mjs   # 完全锚点 / 权重锚点
+  node dev/encoding.test.mjs # 无 BOM、无乱码（提交前必跑）
+  node dev/memory-write.test.mjs
+  node dev/resilience.test.mjs
   ```
 - 接口自测（端口换成你当前 DSH Web GUI 的端口）：
 
