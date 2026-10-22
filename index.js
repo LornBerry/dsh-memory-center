@@ -137,7 +137,7 @@ async function saveConfig(dir, patch = {}) {
 const MEMORY_POLICY = [
   '## 长期记忆（memory-center）',
   '',
-  '用户有一份长期记忆库，存在本机（「记忆」面板 →「存储位置」可改），由用户维护。工具：`memory_search` 检索、`memory_write` 写入候选。写入一律进「未归类 + 待确认」，由用户转正；你不要替用户分类。',
+  '用户有一份长期记忆库，存在本机（「记忆」面板 →「存储位置」可改），由用户维护。工具：`memory_search` 检索、`memory_write` 写入候选。写入先落「待确认」；同一个会话累计到第 2 条起，插件会自动放进一个以会话标题命名的文件夹（仍待确认），由用户转正。',
   '',
   '**判断顺序：关键词为主，自判为辅。**',
   '1. **用户明说**——「记一下 / 记住 / 存一下」：直接写，按用户说的写具体。',
@@ -165,6 +165,8 @@ let store = null
 let sessions = {}
 let loading = null
 let writeChain = Promise.resolve()
+/** 运行期缓存：会话 id → 会话标题（用于同一会话第 2 条记忆起的自动文件夹命名）。 */
+const sessionTitles = new Map()
 
 function normalizeTags(value) {
   if (!Array.isArray(value)) return []
@@ -215,6 +217,7 @@ function normalizeState(raw) {
         pinned: item.pinned === true,
         status: item.status === 'pending' ? 'pending' : 'active',
         source: ['manual', 'auto', 'import'].includes(item.source) ? item.source : 'manual',
+        sessionId: typeof item.sessionId === 'string' && item.sessionId ? item.sessionId : null,
         order: Number.isFinite(item.order) ? Number(item.order) : state.items.length,
         createdAt: typeof item.createdAt === 'string' ? item.createdAt : nowIso(),
         updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : nowIso(),
@@ -650,6 +653,53 @@ function uniqueGroupName(state, name, exceptId) {
 
 function dedupeKey(item) {
   return `${String(item.title ?? '').trim()}||${String(item.body ?? '').trim()}`
+}
+
+/**
+ * 会话标题：优先用宿主给的 header.title，没有就用本轮第一条用户消息（与侧栏标题同源），
+ * 再没有才退回会话 ID 前缀。标题只用于给「同一会话第 2 条起」的自动文件夹命名。
+ */
+function sessionTitleFrom(messages) {
+  if (!Array.isArray(messages)) return ''
+  for (const message of messages) {
+    if (message?.role !== 'user' || message?.source?.kind) continue
+    const content = message.content
+    const text =
+      typeof content === 'string'
+        ? content
+        : Array.isArray(content)
+          ? content
+              .filter((part) => part?.type === 'text' && typeof part.text === 'string')
+              .map((part) => part.text)
+              .join(' ')
+          : ''
+    const clean = String(text).replace(/\s+/g, ' ').trim()
+    if (clean) return clean.length > 24 ? `${clean.slice(0, 24)}…` : clean
+  }
+  return ''
+}
+
+function sessionOf(exec) {
+  const session = exec?.session ?? exec?.agent?.session
+  const id = session?.header?.id ?? session?.id ?? exec?.sessionId ?? null
+  const headerTitle = session?.header?.title ?? session?.title ?? ''
+  return { id: typeof id === 'string' && id ? id : null, headerTitle: typeof headerTitle === 'string' ? headerTitle.trim() : '' }
+}
+
+/** 同会话第 2 条起：确保有一个以会话标题命名的文件夹；已存在同名就复用。 */
+function ensureGroupByName(state, name) {
+  const trimmed = String(name ?? '').trim()
+  if (!trimmed) return null
+  const existing = state.groups.find((group) => group.name.toLowerCase() === trimmed.toLowerCase())
+  if (existing) return existing
+  const group = {
+    id: `g-${randomUUID().slice(0, 8)}`,
+    name: uniqueGroupName(state, trimmed),
+    order: nextOrder(state.groups),
+    createdAt: nowIso(),
+  }
+  state.groups.push(group)
+  return group
 }
 
 function parseImportPayload(payload) {
@@ -1322,7 +1372,7 @@ function registerTools(ctx) {
   ctx.tools.register({
     name: 'memory_write',
     description:
-      '向用户长期记忆库写入一条候选记忆。判断顺序：用户明说「记一下/记住」直接写；命中偏好、固定事实、拍板决策的关键词就写（只排除明显只对这一次有效的临时状态）；没命中关键词再自判它跨会话是否有用，拿不准就先问。新记忆一律落到「未归类」，由用户自己整理进文件夹；同时进入「待确认」区，必须由用户在「记忆」面板点「转正」才会生效并参与后续注入。',
+      '向用户长期记忆库写入一条候选记忆。判断顺序：用户明说「记一下/记住」直接写；命中偏好、固定事实、拍板决策的关键词就写（只排除明显只对这一次有效的临时状态）；没命中关键词再自判它跨会话是否有用，拿不准就先问。新记忆先落「待确认」；同一个会话累计到第 2 条起，会自动连同前面的候选一起放进一个以会话标题命名的文件夹（仍待确认），不需要你传文件夹。必须由用户在「记忆」面板点「转正」才会生效并参与后续注入。',
     parameters: {
       type: 'object',
       properties: {
@@ -1336,12 +1386,13 @@ function registerTools(ctx) {
       schema: { type: 'string' },
       render: (_args, value) => [{ type: 'text', text: value }],
     },
-    async execute(args) {
+    async execute(args, exec) {
       const state = await ensureLoaded()
       const title = String(args?.title ?? '').trim()
       const body = String(args?.body ?? '')
       if (!title && !body.trim()) return '写入失败：标题与正文不能同时为空。'
       const tags = normalizeTags(String(args?.tags ?? '').split(','))
+      const { id: sessionId, headerTitle } = sessionOf(exec)
       const item = {
         id: `m-${randomUUID().slice(0, 8)}`,
         title: title || '未命名记忆',
@@ -1352,13 +1403,33 @@ function registerTools(ctx) {
         pinned: false,
         status: 'pending',
         source: 'auto',
+        sessionId,
         order: nextOrder(state.items),
         createdAt: nowIso(),
         updatedAt: nowIso(),
       }
       state.items.push(item)
+
+      // 同一会话累计到第 2 条记忆时，整组的候选记忆一起放进「以会话标题命名」的文件夹；
+      // 状态仍是 pending，直到用户转正——这里只替用户省掉建文件夹和拖拽，不替他决定生效。
+      let groupId = null
+      if (sessionId) {
+        const siblings = state.items.filter((entry) => entry.sessionId === sessionId)
+        if (siblings.length >= 2) {
+          const remembered = sessionTitles.get(sessionId) || headerTitle || `会话 ${sessionId.slice(0, 8)}`
+          const group = ensureGroupByName(state, remembered)
+          if (group) {
+            for (const entry of siblings) {
+              if (!entry.groupId) entry.groupId = group.id
+            }
+            groupId = group.id
+          }
+        }
+      }
       await persist()
-      return `已写入待确认记忆「${item.title}」（放在「未归类」，等你整理）。请在「记忆」面板的「待确认」里审核：转正后可右键「存放到文件夹」，转正前不会参与注入。`
+      const ordinal = sessionId ? state.items.filter((entry) => entry.sessionId === sessionId).length : 0
+      const where = groupId ? `已连同本会话其它记忆放进文件夹「${groupNameOf(state, groupId)}」` : '放在「未归类」'
+      return `已写入待确认记忆「${item.title}」（本会话第 ${ordinal} 条，${where}）。请在「记忆」面板的「待确认」里审核：转正后才生效并参与注入。`
     },
   })
 }
@@ -1404,6 +1475,12 @@ export function apply(ctx) {
       if (!decision || decision.kind !== 'enter' || payload?.signal?.aborted) return decision
       const sessionId = payload?.agent?.session?.header?.id
       if (!sessionId) return decision
+      // 记下会话标题：宿主 header 里通常没有 title，就取本轮第一条用户消息
+      // （GUI 侧栏标题同源），供「同一会话第 2 条记忆」的自动文件夹命名。
+      if (!sessionTitles.has(sessionId)) {
+        const title = sessionTitleFrom(decision.messages) || String(payload?.agent?.session?.header?.title ?? '').trim()
+        if (title) sessionTitles.set(sessionId, title)
+      }
       const state = await ensureLoaded()
       const text = buildInjection(state, sessionId)
       if (!text) return decision
@@ -1433,7 +1510,10 @@ export function apply(ctx) {
 
   ctx.on('agent/disposed', ({ agent }) => {
     const sessionId = agent?.session?.header?.id
-    if (sessionId) lastInjected.delete(sessionId)
+    if (sessionId) {
+      lastInjected.delete(sessionId)
+      sessionTitles.delete(sessionId)
+    }
   })
 
   log('info', 'memory-center loaded', { dataDir: DATA_DIR })
