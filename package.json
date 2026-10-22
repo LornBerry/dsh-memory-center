@@ -1,0 +1,51 @@
+{
+  "name": "dsh-memory-center",
+  "version": "0.1.0",
+  "private": true,
+  "description": "用户可查看、编辑、分组、导入导出并逐会话决定是否加载的本地长期记忆库（DSH 插件）",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "author": "LornBerry",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/LornBerry/dsh-memory-center.git"
+  },
+  "homepage": "https://github.com/LornBerry/dsh-memory-center#readme",
+  "bugs": {
+    "url": "https://github.com/LornBerry/dsh-memory-center/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "memory",
+    "long-term-memory",
+    "记忆"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  }
+}
