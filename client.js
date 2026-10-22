@@ -88,8 +88,6 @@ window.__ModuleLoader__.load({
         .dmc-lead-path { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; padding: 2px 7px; border-radius: 6px; border: 1px solid rgba(127,127,127,.3); background: rgba(127,127,127,.1); cursor: copy; user-select: all; }
         .dmc-lead-path:hover { background: rgba(127,127,127,.2); }
         .dmc-btn.is-sm { padding: 2px 8px; font-size: 11.5px; }
-        .dmc-foot-path { display: flex; align-items: center; gap: 6px; margin-top: 4px; min-width: 0; }
-        .dmc-foot-path code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .dmc-pop { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 500; width: 300px; max-height: 60vh; overflow: auto; border-radius: 12px; border: 1px solid rgba(127,127,127,.3); background: var(--dsh-popover-bg, #1f2126); color: var(--dsh-popover-fg, #e6e6e6); box-shadow: 0 12px 32px rgba(0,0,0,.32); padding: 10px; }
         .dmc-pop-wrap { position: relative; display: inline-flex; }
         .dmc-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.42); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 24px; }
@@ -1042,7 +1040,6 @@ window.__ModuleLoader__.load({
       const [dropKey, setDropKey] = useState(null)
       const [storageOpen, setStorageOpen] = useState((props && props.debugStorage) || false)
       const [syncOpen, setSyncOpen] = useState((props && props.debugSync) || false)
-      const [copiedPath, setCopiedPath] = useState(false)
 
       useEffect(() => {
         refresh(activeSessionId)
@@ -1308,28 +1305,6 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'dmc-nav-foot' },
             h('div', null, `共 ${data.stats.items} 条 · 参与注入 ${data.stats.enabled} 条 · 待确认 ${pendingCount} 条`),
-            h(
-              'div',
-              { className: 'dmc-foot-path' },
-              h(
-                'code',
-                {
-                  className: 'dmc-lead-path',
-                  title: '点击复制路径',
-                  onClick: async () => {
-                    if (!(await copyText(data.dataDir))) return
-                    setCopiedPath(true)
-                    setTimeout(() => setCopiedPath(false), 1500)
-                  },
-                },
-                copiedPath ? '已复制 ✓' : data.dataDir,
-              ),
-              h(
-                'button',
-                { className: 'dmc-btn is-sm', title: '更改存储位置', onClick: () => setStorageOpen(true) },
-                '更改',
-              ),
-            ),
           ),
         ),
         h(
