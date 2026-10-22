@@ -74,6 +74,8 @@ window.__ModuleLoader__.load({
         .dmc-item-body { margin-top: 6px; opacity: .82; white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.6; max-height: 120px; overflow: hidden; }
         .dmc-tags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
         .dmc-tag { font-size: 11px; padding: 1px 6px; border-radius: 999px; background: rgba(127,127,127,.16); }
+.dmc-tag.dmc-anchor-full { background: rgba(210,140,40,.22); }
+.dmc-tag.dmc-anchor-weight { background: rgba(90,140,220,.20); }
         .dmc-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
         .dmc-empty { opacity: .6; padding: 24px; text-align: center; }
         .dmc-error { color: #e5534b; padding: 8px 14px; font-size: 12px; }
@@ -264,13 +266,14 @@ window.__ModuleLoader__.load({
       const [groupId, setGroupId] = useState(item ? item.groupId || '' : '')
       const [pinned, setPinned] = useState(item ? item.pinned : false)
       const [enabled, setEnabled] = useState(item ? item.enabled : true)
+      const [anchorMode, setAnchorMode] = useState(item ? item.anchorMode || 'off' : 'off')
 
       const save = async () => {
         const tags = tagText
           .split(/[,，、]/)
           .map((tag) => tag.trim())
           .filter(Boolean)
-        const patch = { title, body, tags, groupId: groupId || null, pinned, enabled }
+        const patch = { title, body, tags, groupId: groupId || null, pinned, enabled, anchorMode }
         const done = item
           ? await run('item.update', { id: item.id, patch })
           : await run('item.create', patch)
@@ -340,6 +343,19 @@ window.__ModuleLoader__.load({
             h('option', { value: '' }, '未归类'),
             data.groups.map((group) => h('option', { key: group.id, value: group.id }, group.name)),
           ),
+        ),
+        h(
+          'div',
+          { className: 'dmc-field' },
+          h('label', null, '锚点（可选）'),
+          h(
+            'select',
+            { className: 'dmc-select', value: anchorMode, onChange: (event) => setAnchorMode(event.target.value) },
+            h('option', { value: 'off' }, '不启用'),
+            h('option', { value: 'full' }, '完全锚点：必须完全照此执行/表达'),
+            h('option', { value: 'weight' }, '仅权重：只影响措辞与优先级，可偏离'),
+          ),
+          h('div', { className: 'dmc-card-hint' }, '「完全」适合必须遵守的规矩；「仅权重」适合语气、偏好这类倾向。'),
         ),
         h(
           'div',
@@ -1518,6 +1534,11 @@ window.__ModuleLoader__.load({
                       h('span', { className: 'dmc-item-title' }, `${item.pinned ? '📌 ' : ''}${item.title}`),
                       h('span', { className: 'dmc-tag' }, groupName(data, item.groupId)),
                       item.status === 'pending' ? h('span', { className: 'dmc-tag' }, '待确认') : null,
+                      item.anchorMode === 'full'
+                        ? h('span', { className: 'dmc-tag dmc-anchor-full' }, '完全锚点')
+                        : item.anchorMode === 'weight'
+                          ? h('span', { className: 'dmc-tag dmc-anchor-weight' }, '权重锚点')
+                          : null,
                       h('span', { className: 'dmc-tag' }, item.source === 'auto' ? '模型写入' : item.source === 'import' ? '导入' : '手动'),
                     ),
                     item.tags.length ? h('div', { className: 'dmc-tags' }, item.tags.map((tag) => h('span', { key: tag, className: 'dmc-tag' }, tag))) : null,

@@ -218,6 +218,7 @@ function normalizeState(raw) {
         status: item.status === 'pending' ? 'pending' : 'active',
         source: ['manual', 'auto', 'import'].includes(item.source) ? item.source : 'manual',
         sessionId: typeof item.sessionId === 'string' && item.sessionId ? item.sessionId : null,
+        anchorMode: ['full', 'weight'].includes(item.anchorMode) ? item.anchorMode : 'off',
         order: Number.isFinite(item.order) ? Number(item.order) : state.items.length,
         createdAt: typeof item.createdAt === 'string' ? item.createdAt : nowIso(),
         updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : nowIso(),
@@ -534,11 +535,16 @@ function buildInjection(state, sessionId) {
     `本次加载 ${items.length} 条 / ${groups.size} 个文件夹。记忆可能过时，与代码或工具输出冲突时以实际观察为准，并提示用户更新记忆。`,
   )
   blocks.push('')
+  blocks.push(
+    '锚点：标「〔完全锚点〕」的条目必须完全照此执行/表达，不得偏离；标「〔权重锚点〕」的条目只作为输出倾向的权重，影响措辞与优先级，可偏离。',
+  )
+  blocks.push('')
   for (const [groupId, groupItems] of groups) {
     blocks.push(`### ${groupId ? groupNameOf(state, groupId) : '未归类'}`)
     for (const item of groupItems) {
       const tags = item.tags.length ? `  〔${item.tags.join(' / ')}〕` : ''
-      blocks.push(`- ${item.pinned ? '📌 ' : ''}**${item.title}**${tags}`)
+      const anchor = item.anchorMode === 'full' ? '〔完全锚点〕' : item.anchorMode === 'weight' ? '〔权重锚点〕' : ''
+      blocks.push(`- ${item.pinned ? '📌 ' : ''}${anchor}**${item.title}**${tags}`)
       const body = item.body.trim()
       if (body) {
         for (const line of body.split('\n')) blocks.push(line ? `  ${line}` : '')
@@ -962,6 +968,7 @@ async function runOp(op, payload) {
         pinned: payload.pinned === true,
         status: 'active',
         source: 'manual',
+        anchorMode: ['full', 'weight'].includes(payload.anchorMode) ? payload.anchorMode : 'off',
         order: nextOrder(state.items),
         createdAt: nowIso(),
         updatedAt: nowIso(),
@@ -984,6 +991,7 @@ async function runOp(op, payload) {
       if ('groupId' in patch) item.groupId = resolveGroupId(state, patch.groupId)
       if ('enabled' in patch) item.enabled = patch.enabled !== false
       if ('pinned' in patch) item.pinned = patch.pinned === true
+      if ('anchorMode' in patch) item.anchorMode = ['full', 'weight'].includes(patch.anchorMode) ? patch.anchorMode : 'off'
       if ('status' in patch) item.status = patch.status === 'pending' ? 'pending' : 'active'
       item.updatedAt = nowIso()
       await persist()
@@ -1001,6 +1009,7 @@ async function runOp(op, payload) {
         if ('pinned' in patch) item.pinned = patch.pinned === true
         if ('status' in patch) item.status = patch.status === 'pending' ? 'pending' : 'active'
         if ('groupId' in patch) item.groupId = resolveGroupId(state, patch.groupId)
+        if ('anchorMode' in patch) item.anchorMode = ['full', 'weight'].includes(patch.anchorMode) ? patch.anchorMode : 'off'
         item.updatedAt = nowIso()
         changed += 1
       }
