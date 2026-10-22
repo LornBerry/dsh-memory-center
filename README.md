@@ -29,6 +29,23 @@ DSH 的「长期记忆」面板插件：**你自己看得见、改得动、决�
 | 输入框上方 | 记忆卡片 | **新会话**（还没决定时）出现：「选文件夹…」弹层一下就整组加载，不用一条条勾 |
 | 主面板 | 资源管理器式 | 左栏文件夹、右栏条目；拖拽卡片到文件夹即移动、勾选多选后批量移动/停用/删除、右键或悬停「…」出菜单、顶部面包屑回上级 |
 | 主面板 →「存储位置」 | 存储设置 | 设置页顶部与主面板左栏底部的库路径都可点即复制，旁边「更改…」打开此弹窗；弹窗里路径输入框可直接编辑，旁边有「复制」和「选择…」；改完点「应用」才切换（默认把现有记忆复制过去），选择记在数据目录内的 `config.json` |
+| 主面板 →「云端同步」 | 同步设置 | 三选一：不绑定 / Git 仓库 / WebDAV 网盘。默认「不绑定」，记忆只在本机 |
+
+## 跨设备（可选，默认关闭）
+
+记忆本体永远在本机的数据目录里，云端只是「多设备共用同一份」。三种选择：
+
+| 选项 | 适合谁 | 代价 |
+| --- | --- | --- |
+| 不绑定（默认） | 只在一台机器用，或者接受手动导出导入 | 换设备看不到；一个字节都不外发 |
+| **Git 仓库** | 有 GitHub / Gitee / 自建 git 的人 | 需要建一个私有仓库、配一次凭据。换来完整历史、可回滚、冲突按条目合并 |
+| **WebDAV 网盘** | 坚果云 / Nextcloud / 群晖用户 | 没有历史版本，只有一个 `store.json`；撞车时后写的赢 |
+
+- 开了之后：打开面板时自动拉取（可关），改动后 4 秒自动上传（可关），也可以随时点「立即同步」。
+- 冲突规则：**按条目**合并——同一条记忆两边都改，`updatedAt` 新的赢；删除会记墓碑，不会在另一台设备上「复活」。
+- 大小：一条记忆几百字节，一万条也就几 MB；Git 侧只存增量，不会越存越满。
+- Git 侧的实现细节：数据目录下会多出 `.git-sync/repo`（影子仓库），`config.json` 和 `sessions.json` 不入库（前者含本机凭据，后者只对本机会话有意义）。
+- WebDAV 的账号密码存在本机 `config.json` 里（明文）；`.gitignore` 已经把 `config.json` 排除在 Git 之外，但走 WebDAV 时它就在本机文件里。
 
 ## 关键行为
 
@@ -87,11 +104,20 @@ DSH 的「长期记忆」面板插件：**你自己看得见、改得动、决�
   ```
 
   它内置一个微型 hook 渲染器，逐个渲染各插槽组件并检查注册拓扑与页面文案，输出 `SMOKE OK` 表示通过。
+- 其余离线测试（都不联网、不碰真实记忆库）：
+
+  ```bash
+  node dev/paths.test.mjs    # 数据目录会探测到哪
+  node dev/host-smoke.mjs    # 宿主半 API 与目录切换
+  node dev/merge.test.mjs    # 两台设备的条目级合并规则
+  node dev/sync.test.mjs     # WebDAV 后端（本地假服务器）
+  node dev/sync-git.test.mjs # Git 后端（本地裸仓库扮远端，模拟两台设备）
+  ```
 - 接口自测（端口换成你当前 DSH Web GUI 的端口）：
 
   ```bash
   curl -X POST http://127.0.0.1:<port>/dsh-memory/api -H "content-type: application/json" -d '{"op":"state"}'
   ```
 
-  可用 op 见 `index.js` 的 `switch (op)`：`state` / `group.*` / `item.*` / `session.*` / `import.preview` / `import.apply` / `export` / `search` / `config.get` / `config.set`。
+  可用 op 见 `index.js` 的 `switch (op)`：`state` / `group.*` / `item.*` / `session.*` / `import.preview` / `import.apply` / `export` / `search` / `config.get` / `config.set` / `sync.get` / `sync.set` / `sync.now`。
 - 需求与验收标准：见 [SPEC.md](./SPEC.md)。

@@ -99,6 +99,15 @@ window.__ModuleLoader__.load({
         .dmc-modal-foot { padding: 10px 14px; border-top: 1px solid rgba(127,127,127,.2); display: flex; justify-content: flex-end; gap: 8px; }
         .dmc-field { display: flex; flex-direction: column; gap: 4px; }
         .dmc-field > label { font-size: 11px; opacity: .7; }
+        .dmc-sync-options { display: flex; flex-direction: column; gap: 8px; }
+        .dmc-sync-option {
+          display: flex; gap: 10px; align-items: flex-start; cursor: pointer;
+          border: 1px solid rgba(127,127,127,.28); border-radius: 10px; padding: 10px 12px;
+        }
+        .dmc-sync-option:hover { border-color: rgba(127,127,127,.5); }
+        .dmc-sync-option.is-active { border-color: #3b82f6; background: rgba(59,130,246,.08); }
+        .dmc-sync-option input { margin-top: 3px; }
+        .dmc-sync-title { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
         .dmc-input, .dmc-textarea, .dmc-select { width: 100%; box-sizing: border-box; padding: 6px 9px; border-radius: 8px; border: 1px solid rgba(127,127,127,.3); background: rgba(127,127,127,.08); color: inherit; font-size: 13px; font-family: inherit; }
         .dmc-textarea { min-height: 120px; resize: vertical; line-height: 1.6; }
         .dmc-textarea.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
@@ -820,6 +829,200 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function SyncDialog({ syncInfo, dataDir, gitAvailable, onClose, onDone }) {
+      const info = syncInfo || {}
+      const [mode, setMode] = useState(info.mode || 'off')
+      const [remote, setRemote] = useState(info.remote || '')
+      const [branch, setBranch] = useState(info.branch || 'main')
+      const [username, setUsername] = useState(info.username || '')
+      const [password, setPassword] = useState(info.password || '')
+      const [autoPull, setAutoPull] = useState(info.autoPull !== false)
+      const [autoPush, setAutoPush] = useState(info.autoPush !== false)
+      const [busy, setBusy] = useState(false)
+      const [error, setError] = useState(null)
+      const [result, setResult] = useState(null)
+
+      const options = [
+        {
+          key: 'off',
+          title: '不绑定云端',
+          hint: '记忆只在这台机器上。换设备看不到，但也不会有任何数据外发。',
+        },
+        {
+          key: 'git',
+          title: 'Git 仓库',
+          hint: '推到你自己的私有仓库（GitHub / Gitee / 自建）。有完整历史，可回滚，换设备 pull 一次就全回来。',
+        },
+        {
+          key: 'webdav',
+          title: 'WebDAV 网盘',
+          hint: '坚果云 / Nextcloud / 群晖都行。只有一个 store.json，没有历史版本，但最省事。',
+        },
+      ]
+
+      const run = async (action, payload) => {
+        setBusy(true)
+        setError(null)
+        try {
+          const outcome = await action(payload)
+          setBusy(false)
+          setResult((outcome && outcome.message) || '完成')
+          if (onDone) onDone()
+        } catch (cause) {
+          setBusy(false)
+          setError(cause && cause.message ? cause.message : String(cause))
+        }
+      }
+
+      const save = () =>
+        run((payload) => api('sync.set', payload), {
+          patch: { mode, remote: remote.trim(), branch: branch.trim() || 'main', username, password, autoPull, autoPush },
+        })
+
+      const syncNow = () => run(() => api('sync.now'))
+
+      return h(
+        'div',
+        {
+          className: 'dmc-overlay',
+          onClick: (event) => {
+            if (event.target === event.currentTarget) onClose()
+          },
+        },
+        h(
+          'div',
+          { className: 'dmc-modal', style: { width: 'min(620px, 100%)' } },
+          h('div', { className: 'dmc-modal-head' }, '云端同步（可选）'),
+          h(
+            'div',
+            { className: 'dmc-modal-body' },
+            h(
+              'div',
+              { className: 'dmc-card-hint', style: { lineHeight: '1.7' } },
+              `记忆本体永远在这台机器上（${(dataDir || info.dataDir || '本机目录')}）。云端只是「多设备共用同一份」，不绑定也完全能用。`,
+            ),
+            h(
+              'div',
+              { className: 'dmc-sync-options' },
+              options.map((option) =>
+                h(
+                  'label',
+                  {
+                    key: option.key,
+                    className: `dmc-sync-option${mode === option.key ? ' is-active' : ''}`,
+                  },
+                  h('input', {
+                    type: 'radio',
+                    name: 'dmc-sync-mode',
+                    checked: mode === option.key,
+                    onChange: () => setMode(option.key),
+                  }),
+                  h(
+                    'div',
+                    null,
+                    h('div', { className: 'dmc-sync-title' }, option.title),
+                    h('div', { className: 'dmc-card-hint' }, option.hint),
+                  ),
+                ),
+              ),
+            ),
+            mode === 'git'
+              ? h(
+                  'div',
+                  { className: 'dmc-field' },
+                  h('label', null, '仓库地址（可以是你自己的私有仓库）'),
+                  h('input', {
+                    className: 'dmc-input',
+                    value: remote,
+                    spellCheck: false,
+                    placeholder: 'https://github.com/你的账号/memory.git',
+                    onChange: (event) => setRemote(event.target.value),
+                  }),
+                  h('label', null, '分支'),
+                  h('input', {
+                    className: 'dmc-input',
+                    value: branch,
+                    spellCheck: false,
+                    placeholder: 'main',
+                    onChange: (event) => setBranch(event.target.value),
+                  }),
+                  gitAvailable === false
+                    ? h('div', { className: 'dmc-error', style: { padding: '0' } }, '这台机器上没有找到 git，先装 Git 再选这个。')
+                    : h('div', { className: 'dmc-card-hint' }, '推送用系统里已登录的 Git 凭据（GitHub 可以用「个人访问令牌」当密码）。'),
+                )
+              : null,
+            mode === 'webdav'
+              ? h(
+                  'div',
+                  { className: 'dmc-field' },
+                  h('label', null, 'WebDAV 目录地址（末尾不要带 store.json）'),
+                  h('input', {
+                    className: 'dmc-input',
+                    value: remote,
+                    spellCheck: false,
+                    placeholder: 'https://dav.jianguoyun.com/dav/记忆',
+                    onChange: (event) => setRemote(event.target.value),
+                  }),
+                  h('label', null, '账号'),
+                  h('input', {
+                    className: 'dmc-input',
+                    value: username,
+                    spellCheck: false,
+                    autoComplete: 'off',
+                    onChange: (event) => setUsername(event.target.value),
+                  }),
+                  h('label', null, '密码 / 应用密码'),
+                  h('input', {
+                    className: 'dmc-input',
+                    type: 'password',
+                    value: password,
+                    autoComplete: 'new-password',
+                    onChange: (event) => setPassword(event.target.value),
+                  }),
+                  h('div', { className: 'dmc-card-hint' }, '账号密码会存在本机 config.json 里（明文）。坚果云要去「安全选项」生成应用密码。'),
+                )
+              : null,
+            mode !== 'off'
+              ? h(
+                  'div',
+                  { className: 'dmc-actions' },
+                  h(
+                    'label',
+                    { className: 'dmc-card-row', style: { gap: '6px' } },
+                    h('input', { type: 'checkbox', checked: autoPull, onChange: (event) => setAutoPull(event.target.checked) }),
+                    h('span', { className: 'dmc-card-hint' }, '打开面板时自动拉取'),
+                  ),
+                  h(
+                    'label',
+                    { className: 'dmc-card-row', style: { gap: '6px' } },
+                    h('input', { type: 'checkbox', checked: autoPush, onChange: (event) => setAutoPush(event.target.checked) }),
+                    h('span', { className: 'dmc-card-hint' }, '改动后自动上传' ),
+                  ),
+                )
+              : null,
+            error ? h('div', { className: 'dmc-error', style: { padding: '0' } }, error) : null,
+            result ? h('div', { className: 'dmc-ok', style: { padding: '0' } }, result) : null,
+            info.lastSyncAt
+              ? h(
+                  'div',
+                  { className: 'dmc-card-hint' },
+                  `上次同步：${new Date(info.lastSyncAt).toLocaleString('zh-CN')}${info.lastSyncStatus ? `（${info.lastSyncStatus}）` : ''}${
+                    info.lastSyncError ? ` 错误：${info.lastSyncError}` : ''
+                  }`,
+                )
+              : null,
+          ),
+          h(
+            'div',
+            { className: 'dmc-modal-foot' },
+            h('button', { className: 'dmc-btn', onClick: onClose }, '关闭'),
+            mode !== 'off' ? h('button', { className: 'dmc-btn', onClick: syncNow, disabled: busy }, busy ? '同步中…' : '立即同步') : null,
+            h('button', { className: 'dmc-btn primary', onClick: save, disabled: busy }, busy ? '保存中…' : '保存'),
+          ),
+        ),
+      )
+    }
+
     function MemoryPanel(props) {
       const state = useStore()
       const data = state.data
@@ -838,6 +1041,7 @@ window.__ModuleLoader__.load({
       const [dragIds, setDragIds] = useState([])
       const [dropKey, setDropKey] = useState(null)
       const [storageOpen, setStorageOpen] = useState((props && props.debugStorage) || false)
+      const [syncOpen, setSyncOpen] = useState((props && props.debugSync) || false)
       const [copiedPath, setCopiedPath] = useState(false)
 
       useEffect(() => {
@@ -1145,6 +1349,15 @@ window.__ModuleLoader__.load({
             h('button', { className: 'dmc-btn', onClick: () => setExporting(true) }, '导出'),
             h('button', { className: 'dmc-btn', onClick: () => setPreview(data.preview) }, '预览注入'),
             h('button', { className: 'dmc-btn', onClick: () => setStorageOpen(true) }, '存储位置'),
+            h(
+              'button',
+              {
+                className: 'dmc-btn',
+                title: '可选：把记忆同步到你自己的 Git 仓库或网盘',
+                onClick: () => setSyncOpen(true),
+              },
+              data.sync && data.sync.mode && data.sync.mode !== 'off' ? '云端同步 · 已开' : '云端同步',
+            ),
             embedded
               ? null
               : h('button', { className: 'dmc-btn', onClick: () => openPanel(null) }, '返回对话'),
@@ -1357,6 +1570,15 @@ window.__ModuleLoader__.load({
           ? h(StorageDialog, {
               dataDir: data.dataDir,
               onClose: () => setStorageOpen(false),
+              onDone: () => refresh(activeSessionId),
+            })
+          : null,
+        syncOpen
+          ? h(SyncDialog, {
+              syncInfo: data.sync,
+              dataDir: data.dataDir,
+              gitAvailable: data.gitAvailable,
+              onClose: () => setSyncOpen(false),
               onDone: () => refresh(activeSessionId),
             })
           : null,
@@ -1630,6 +1852,7 @@ window.__ModuleLoader__.load({
       const data = state.data
       const [copied, setCopied] = useState(false)
       const [storage, setStorage] = useState(false)
+      const [syncOpen, setSyncOpen] = useState(false)
 
       useEffect(() => {
         if (!data) refresh()
@@ -1659,9 +1882,27 @@ window.__ModuleLoader__.load({
           ),
           h('button', { className: 'dmc-btn is-sm', onClick: copy, disabled: !dataDir }, copied ? '已复制' : '复制'),
           h('button', { className: 'dmc-btn is-sm', onClick: () => setStorage(true), disabled: !dataDir }, '更改…'),
+          h(
+            'button',
+            {
+              className: 'dmc-btn is-sm',
+              onClick: () => setSyncOpen(true),
+              title: '可选：同步到你自己的 Git 仓库或 WebDAV 网盘',
+            },
+            data && data.sync && data.sync.mode && data.sync.mode !== 'off' ? '云端同步 · 已开' : '云端同步…',
+          ),
           h('span', { className: 'dmc-card-hint' }, '改完立即落盘，两个入口同步。'),
         ),
         h(MemoryPanel, { embedded: true }),
+        syncOpen
+          ? h(SyncDialog, {
+              syncInfo: data && data.sync,
+              dataDir,
+              gitAvailable: data && data.gitAvailable,
+              onClose: () => setSyncOpen(false),
+              onDone: () => refresh(),
+            })
+          : null,
         storage
           ? h(StorageDialog, {
               dataDir,

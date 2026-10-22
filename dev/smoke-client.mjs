@@ -163,6 +163,19 @@ const snapshot = {
   stats: { groups: 2, items: 2, enabled: 2, pending: 1, pinned: 1 },
   session: { sessionId: 'smoke', decided: false, mode: 'none', groupIds: [], itemIds: [], count: 0, groupCount: 0 },
   preview: '## 用户长期记忆\n\n- 记忆数据放在 E 盘',
+  sync: {
+    mode: 'off',
+    remote: '',
+    branch: 'main',
+    username: '',
+    password: '',
+    autoPush: true,
+    autoPull: true,
+    lastSyncAt: '',
+    lastSyncStatus: '',
+    lastSyncError: '',
+  },
+  gitAvailable: true,
   updatedAt: '2026-10-22T00:00:00.000Z',
 }
 
@@ -274,6 +287,7 @@ const panelStates = [
   { label: ' menu-folder', props: { debugMenu: { kind: 'folder', id: 'g-1', x: 40, y: 60 } } },
   { label: ' pending', props: { debugFilter: '__pending' } },
   { label: ' storage', props: { debugStorage: true } },
+  { label: ' sync', props: { debugSync: true } },
 ]
 
 const panelStatesFor = (name) => (name === 'main' || name === 'settings.section' ? panelStates : [{ label: '', props: {} }])

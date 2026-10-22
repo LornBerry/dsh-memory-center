@@ -75,6 +75,15 @@
 - 内容与侧栏「记忆」面板同源同操作；嵌入版隐藏「返回对话」按钮，高度自适应为 `min(72vh, 660px)`。
 - 两个入口改的是同一份 `store.json`，任一处改动另一处刷新即见。
 
+### F9 云端同步（v1.2，用户追加需求）
+- 默认「不绑定」：记忆只在本机，一个字节都不外发；DSH 账号本身不提供云存储（宿主没有给插件的云 KV 接口）。
+- 三选一后端：`off` / `git`（任意 Git 远端，含 GitHub 私有仓库、Gitee、自建）/ `webdav`（坚果云、Nextcloud、群晖）。
+- 合并粒度是**单条记忆**：按 `id` + `updatedAt` 取新的；删除写墓碑（`store.json` 的 `deleted[]`），不会在另一台设备上复活；文件夹取并集，冲突以本机为准。
+- Git 后端：影子仓库在 `<数据目录>/.git-sync/repo`，`config.json` 与 `sessions.json` 不入库；先取远端 → 本地合并 → `reset --soft` 对齐远端 tip → 提交 → 推送，因此推送总是 fast-forward，不产生 git 文本冲突。
+- WebDAV 后端：`MKCOL` 建目录 → `GET store.json` → 合并 → `PUT`；远端内容不是合法 JSON 时中止并报错，不覆盖。
+- `autoPull`（打开面板时拉取）/ `autoPush`（改动后 4 秒自动推）都可关；另有「立即同步」。
+- 同步设置存在 `<数据目录>/config.json` 的 `sync` 字段（WebDAV 账号密码为明文，属本机文件）。
+
 ## 4. 验收标准
 
 | # | 验收标准 | 验证方式 |
@@ -90,6 +99,7 @@
 | AC9 | 导出全部为 JSON 与 Markdown；导入按「标题+正文」去重，先预览将新增/跳过条数 | 手动 |
 | AC10 | 数据目录由自动探测决定，不依赖任何固定盘符：无 `DSH_MEMORY_DIR`、无配置文件、无老数据时落到 `<DSH_HOME>/memory`（本机为 E 盘数据根下的 memory）；记忆文件只出现在该目录内 | `node dev/paths.test.mjs` + `Get-ChildItem` |
 | AC11 | 设置页出现「记忆库」页，能完成与侧栏面板相同的增删改/文件夹/导入导出，且与侧栏共享同一份数据 | 手动：两处各改一条，互看结果 |
+| AC12 | 默认不开启同步时，面板显示「云端同步」但没有任何外发请求；开启 Git/WebDAV 后，两台设备各自改动不同条目再同步，两边都保留；删掉的条目不会回流 | `node dev/sync-git.test.mjs` + `node dev/sync.test.mjs`（后者用本地假 WebDAV 服务器） |
 
 ## 5. 非目标（v1 不做）
 

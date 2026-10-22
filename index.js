@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { canWriteDir, candidateDataDirs, pickDataDir } from './lib/paths.js'
+import { hasGit, mergeStates, normalizeSync, syncNow as runSync } from './lib/sync.js'
 
 export const name = 'memory-center'
 export const inject = ['webServer']
@@ -37,6 +38,9 @@ let STORE_FILE = ''
 let SESSIONS_FILE = ''
 let CONFIG_FILE = ''
 let autoDir = ''
+let sync = normalizeSync(null)
+let gitOk = null
+let pushTimer = null
 
 function configFileFor(dir) {
   return path.join(dir, 'config.json')
@@ -59,6 +63,12 @@ async function readConfigDir(file) {
 }
 
 async function loadConfig() {
+  await loadDataDir()
+  sync = normalizeSync((await readConfigFile(CONFIG_FILE)).sync)
+  if (gitOk === null) gitOk = await hasGit()
+}
+
+async function loadDataDir() {
   if (process.env.DSH_MEMORY_DIR) {
     applyDataDir(path.resolve(process.env.DSH_MEMORY_DIR))
     CONFIG_FILE = configFileFor(DATA_DIR)
@@ -88,17 +98,30 @@ async function defaultDataDir() {
   return autoDir
 }
 
+async function readConfigFile(file) {
+  try {
+    const parsed = JSON.parse(await fs.readFile(file, 'utf8'))
+    return parsed && typeof parsed === 'object' ? parsed : {}
+  } catch {
+    return {}
+  }
+}
+
 /**
  * 记住用户的选择。同时写回「上一个位置」的 config.json：否则老目录还在、老目录
  * 又排在候选列表前面时，下次启动会被「已有 store.json」抢先把目录改回去。
+ *
+ * 除了 dataDir，这里还存同步设置（sync），所以必须读-改-写，不能整份覆盖。
  */
-async function saveConfig(dir) {
+async function saveConfig(dir, patch = {}) {
   const targets = new Set([configFileFor(dir)])
   if (CONFIG_FILE) targets.add(CONFIG_FILE)
   for (const target of targets) {
+    const current = await readConfigFile(target)
+    const next = { ...current, ...patch, dataDir: dir }
     await fs.mkdir(path.dirname(target), { recursive: true })
     const temp = `${target}.${process.pid}.tmp`
-    await fs.writeFile(temp, `${JSON.stringify({ dataDir: dir }, null, 2)}\n`, 'utf8')
+    await fs.writeFile(temp, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
     await fs.rename(temp, target)
   }
   CONFIG_FILE = configFileFor(dir)
@@ -140,7 +163,7 @@ function nowIso() {
 }
 
 function emptyState() {
-  return { version: 1, updatedAt: nowIso(), groups: [], items: [] }
+  return { version: 1, updatedAt: nowIso(), groups: [], items: [], deleted: [] }
 }
 
 let store = null
@@ -167,6 +190,12 @@ function normalizeState(raw) {
   const source = raw && typeof raw === 'object' ? raw : {}
   const state = emptyState()
   state.updatedAt = typeof source.updatedAt === 'string' ? source.updatedAt : nowIso()
+  if (Array.isArray(source.deleted)) {
+    for (const entry of source.deleted) {
+      if (!entry || typeof entry.id !== 'string') continue
+      state.deleted.push({ id: entry.id, at: typeof entry.at === 'string' ? entry.at : nowIso() })
+    }
+  }
   if (Array.isArray(source.groups)) {
     for (const group of source.groups) {
       if (!group || typeof group.id !== 'string') continue
@@ -243,6 +272,10 @@ async function ensureLoaded() {
   if (!loading) {
     loading = (async () => {
       await loadConfig()
+      // 先同步再读盘：换一台设备第一次打开时，记忆就已经在库里了。
+      if (syncEnabled() && sync.autoPull) {
+        await runSyncNow({ quiet: true }).catch(() => {})
+      }
       store = normalizeState(await readJson(STORE_FILE, null))
       sessions = normalizeSessions(await readJson(SESSIONS_FILE, {}))
       if (!store.groups.length && !store.items.length) {
@@ -292,13 +325,75 @@ function seedState() {
   return state
 }
 
-async function persist() {
+async function persist(options = {}) {
   store.updatedAt = nowIso()
   await queueWrite(STORE_FILE, store)
+  if (!options.skipPush) schedulePush()
 }
 
 async function persistSessions() {
   await queueWrite(SESSIONS_FILE, sessions)
+}
+
+/* ------------------------------------------------------------------- sync */
+
+const SYNC_FILES = ['store.json']
+
+function syncEnabled() {
+  return (sync.mode === 'git' || sync.mode === 'webdav') && Boolean(sync.remote)
+}
+
+function schedulePush() {
+  if (!syncEnabled() || !sync.autoPush) return
+  if (pushTimer) clearTimeout(pushTimer)
+  pushTimer = setTimeout(() => {
+    pushTimer = null
+    void runSyncNow({ quiet: true })
+  }, 4000)
+  if (typeof pushTimer.unref === 'function') pushTimer.unref()
+}
+
+/** 把远端 store 合并进本机，不触发再次推送（避免同步自己唤醒自己）。 */
+async function mergeRemote(remoteStore) {
+  const current = store ?? normalizeState(await readJson(STORE_FILE, null))
+  const outcome = mergeStates(current, normalizeState(remoteStore))
+  if (!outcome.changed) return { changed: false, summary: '' }
+  store = normalizeState(outcome.state)
+  await persist({ skipPush: true })
+  const parts = []
+  if (outcome.added) parts.push(`新增 ${outcome.added}`)
+  if (outcome.updated) parts.push(`更新 ${outcome.updated}`)
+  if (outcome.removed) parts.push(`删除 ${outcome.removed}`)
+  return { changed: true, summary: `已合并远端（${parts.join('、') || '结构变化'}）` }
+}
+
+let syncing = null
+
+async function runSyncNow({ quiet = false } = {}) {
+  if (!syncEnabled()) {
+    return { status: 'skipped', message: '同步未启用' }
+  }
+  if (syncing) return syncing
+  syncing = (async () => {
+    const result = await runSync({
+      dir: DATA_DIR,
+      sync,
+      files: SYNC_FILES,
+      merge: mergeRemote,
+    })
+    if (!quiet) {
+      sync.lastSyncAt = result.syncedAt || nowIso()
+      sync.lastSyncStatus = result.status
+      sync.lastSyncError = result.status === 'error' ? result.message : ''
+      await saveConfig(DATA_DIR, { sync }).catch(() => {})
+    }
+    return result
+  })()
+  try {
+    return await syncing
+  } finally {
+    syncing = null
+  }
 }
 
 /* -------------------------------------------------------------- projection */
@@ -414,6 +509,8 @@ function snapshot(state, sessionId, extra) {
   return {
     ok: true,
     dataDir: DATA_DIR,
+    sync: { ...sync },
+    gitAvailable: gitOk !== false,
     ...extra,
     groups: sortGroups(state.groups),
     items: sortItems(items),
@@ -453,6 +550,21 @@ function requireGroup(state, id) {
 
 function nextOrder(list) {
   return list.reduce((max, entry) => Math.max(max, Number(entry.order) || 0), -1) + 1
+}
+
+/**
+ * 删除要留墓碑，否则另一台设备同步上来会把删掉的条目「复活」。
+ * 每次删除只记 id + 时间，本机不再需要这个 id 时才可清理（这里保留，量很小）。
+ */
+function markDeleted(state, ids) {
+  if (!Array.isArray(state.deleted)) state.deleted = []
+  const at = nowIso()
+  for (const id of ids) {
+    if (typeof id !== 'string') continue
+    const existing = state.deleted.find((entry) => entry.id === id)
+    if (existing) existing.at = at
+    else state.deleted.push({ id, at })
+  }
 }
 
 function uniqueGroupName(state, name, exceptId) {
@@ -575,6 +687,38 @@ async function runOp(op, payload) {
       return snapshot(reloaded, sessionId, { message: `数据目录已改为 ${target}` })
     }
 
+    case 'sync.get': {
+      return { ok: true, sync: { ...sync }, dataDir: DATA_DIR, gitAvailable: await hasGit() }
+    }
+
+    case 'sync.set': {
+      const next = normalizeSync({ ...sync, ...(payload.patch && typeof payload.patch === 'object' ? payload.patch : {}) })
+      if (next.mode === 'git') {
+        if (!next.remote) throw fail('请填写 Git 远端地址，例如 https://github.com/你/记忆库.git')
+        if (!/^(https?:\/\/|git@|ssh:\/\/|file:\/\/|\/|[A-Za-z]:[\\/])/i.test(next.remote)) {
+          throw fail('远端地址看起来不对，支持 https:// 、git@ 或本地路径')
+        }
+        if (!(await hasGit())) throw fail('这台机器上没找到 git，装好 Git 或设置环境变量 DSH_MEMORY_GIT')
+      }
+      if (next.mode === 'webdav') {
+        if (!next.remote) throw fail('请填写 WebDAV 地址，例如 https://dav.jianguoyun.com/dav/记忆')
+        if (!/^https?:\/\//i.test(next.remote)) throw fail('WebDAV 地址必须以 http:// 或 https:// 开头')
+      }
+      sync = normalizeSync({ ...next, lastSyncStatus: '', lastSyncError: '' })
+      await saveConfig(DATA_DIR, { sync })
+      const result = syncEnabled() && sync.autoPull ? await runSyncNow() : { status: 'idle', message: '已保存' }
+      return snapshot(state, sessionId, {
+        message: syncEnabled() ? `同步已启用（${result.status === 'ok' ? '已连上远端' : result.message}）` : '同步已关闭',
+      })
+    }
+
+    case 'sync.now': {
+      if (!syncEnabled()) throw fail('还没启用同步：先填写 Git 远端地址')
+      const result = await runSyncNow()
+      if (result.status === 'error') throw fail(`同步失败：${result.message}`)
+      return snapshot(state, sessionId, { message: result.message || '已同步' })
+    }
+
     case 'group.create': {
       const groupName = uniqueGroupName(state, payload.name)
       state.groups.push({
@@ -598,6 +742,10 @@ async function runOp(op, payload) {
       const group = requireGroup(state, payload.id)
       const mode = payload.mode === 'delete' ? 'delete' : 'keep'
       if (mode === 'delete') {
+        markDeleted(
+          state,
+          state.items.filter((item) => item.groupId === group.id).map((item) => item.id),
+        )
         state.items = state.items.filter((item) => item.groupId !== group.id)
       } else {
         for (const item of state.items) {
@@ -690,6 +838,10 @@ async function runOp(op, payload) {
     case 'item.delete': {
       const ids = Array.isArray(payload.ids) ? payload.ids.filter((id) => typeof id === 'string') : [payload.id]
       const before = state.items.length
+      markDeleted(
+        state,
+        state.items.filter((item) => ids.includes(item.id)).map((item) => item.id),
+      )
       state.items = state.items.filter((item) => !ids.includes(item.id))
       for (const selection of Object.values(sessions)) {
         selection.itemIds = selection.itemIds.filter((id) => !ids.includes(id))

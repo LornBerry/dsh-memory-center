@@ -39,17 +39,24 @@
 ```bash
 node --check index.js
 node --check client.js
-node dev/smoke-client.mjs   # 期望输出 SMOKE OK
-node dev/paths.test.mjs     # 打印数据目录探测链
+node dev/smoke-client.mjs    # 期望输出 SMOKE OK
+node dev/paths.test.mjs      # 打印数据目录探测链
+node dev/host-smoke.mjs      # 宿主半 API 与目录切换（临时目录）
+node dev/merge.test.mjs      # 两台设备的条目级合并规则
+node dev/sync.test.mjs       # WebDAV 后端（本地假服务器）
+node dev/sync-git.test.mjs   # Git 后端（本地裸仓库扮远端，模拟两台设备）
 ```
 
 `dev/smoke-client.mjs` 是一个不依赖浏览器/react 的微型渲染器，会渲染各插槽组件并断言注册拓扑与关键文案。
+改完同步逻辑，至少跑 `merge.test.mjs` + `sync-git.test.mjs`：它们覆盖墓碑不复活、冲突取新、推送 fast-forward 三种易回归的情形。
 
 ## 数据位置
 
 - 记忆数据：**自动探测**，不写死盘符。顺序见 `lib/paths.js`：
-  `DSH_MEMORY_DIR` → 配置文件里的选择 → 已存在 `store.json` 的老目录 → `<DSH_HOME>/memory` →
-  各盘符 `<盘符>:\dsh-data\memory` → `~/.dsh/memory` → 临时目录兜底。
+  `DSH_MEMORY_DIR` → 配置文件里的选择 → 已存在 `store.json` 的老目录 → 已存在的
+  `<盘符>:\dsh-data\memory` → `<DSH_HOME>/memory` → 各盘符 `<盘符>:\dsh-data\memory` →
+  `~/.dsh/memory` → 临时目录兜底。
   本机 DSH 数据根在 E 盘，所以探测结果是 `E:\dsh-data\memory`，但这不是硬编码。
-- 插件自身配置：`<DSH_HOME>\memory-center\config.json`（记录用户选定的数据目录）。
+- 插件自身配置：`<数据目录>/config.json`（记录选定的数据目录与 `sync` 同步设置；不随 Git 入库）。
 - 不要把任何记忆数据写进仓库；也不要为了「能跑」给某台机器硬编码路径。
+- 云端同步默认关闭；`lib/sync.js` 里 `.gitignore` 已排除 `config.json`/`sessions.json`，WebDAV 凭据只存本机。
