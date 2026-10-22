@@ -240,6 +240,17 @@ function normalizeSessions(raw) {
   return out
 }
 
+const SESSION_TTL_MS = 180 * 24 * 60 * 60 * 1000
+
+/** sessions.json 只增不删会一直变大：超过 180 天没动过的会话选择直接丢掉。 */
+function pruneSessions(map) {
+  const cutoff = Date.now() - SESSION_TTL_MS
+  for (const [sessionId, selection] of Object.entries(map)) {
+    const at = Date.parse(selection?.decidedAt ?? '')
+    if (!Number.isFinite(at) || at < cutoff) delete map[sessionId]
+  }
+}
+
 async function readJson(file, fallback) {
   try {
     const text = await fs.readFile(file, 'utf8')
@@ -262,6 +273,42 @@ function queueWrite(file, value) {
   return writeChain
 }
 
+/**
+ * 读 store.json：损坏时不再让插件永久卡死。
+ *
+ * 第一次解析失败先带着文件路径报错（用户可能马上改好重试，此时不动文件）；
+ * 仍然失败才把坏文件改名备份成 `store.json.corrupt-<时间>`，回退空库并重建，
+ * 保证面板不会因为一段坏 JSON 整个不可用。
+ */
+let storeReadFailed = false
+
+async function readStoreFile(file) {
+  let text
+  try {
+    text = await fs.readFile(file, 'utf8')
+  } catch (error) {
+    if (error && error.code === 'ENOENT') return null
+    throw error
+  }
+  try {
+    const parsed = JSON.parse(text)
+    storeReadFailed = false
+    return parsed
+  } catch (error) {
+    if (!storeReadFailed) {
+      storeReadFailed = true
+      throw new Error(
+        `记忆库文件无法解析：${file}\n请修复这个 JSON 文件后重试；再次打开面板时如果仍然损坏，插件会把它备份成 ${file}.corrupt-<时间> 并重建空库。\n原始错误：${error.message}`,
+      )
+    }
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+    const backup = `${file}.corrupt-${stamp}`
+    await fs.rename(file, backup).catch(() => {})
+    storeReadFailed = false
+    return null
+  }
+}
+
 async function ensureLoaded() {
   if (store) return store
   if (!loading) {
@@ -271,14 +318,20 @@ async function ensureLoaded() {
       if (syncEnabled() && sync.autoPull) {
         await runSyncNow({ quiet: true }).catch(() => {})
       }
-      store = normalizeState(await readJson(STORE_FILE, null))
+      store = normalizeState(await readStoreFile(STORE_FILE))
       sessions = normalizeSessions(await readJson(SESSIONS_FILE, {}))
+      pruneSessions(sessions)
       if (!store.groups.length && !store.items.length) {
         store = seedState()
         await persist()
       }
       return store
-    })()
+    })().catch((error) => {
+      // 关键：失败的 promise 不能一直缓存。否则一次坏文件会让之后所有 op
+      // 都返回同一个 rejected promise，修好文件也必须重启宿主才能恢复。
+      loading = null
+      throw error
+    })
   }
   return loading
 }
@@ -492,7 +545,9 @@ function buildInjection(state, sessionId) {
   }
   let text = blocks.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()
   if (text.length > MAX_INJECT_CHARS) {
-    text = `${text.slice(0, MAX_INJECT_CHARS)}\n\n（记忆内容过长，已截断，如需完整内容请在「记忆」面板查看）`
+    // 按码点截断，别把 emoji / 代理对劈成半个字符。
+    const runes = Array.from(text)
+    text = `${runes.slice(0, MAX_INJECT_CHARS).join('')}\n\n（记忆内容过长，已截断，如需完整内容请在「记忆」面板查看）`
   }
   return text
 }
@@ -557,6 +612,11 @@ function requireGroup(state, id) {
   const group = state.groups.find((entry) => entry.id === id)
   if (!group) throw fail(`找不到文件夹：${id}`)
   return group
+}
+
+/** 只接受真实存在的文件夹 id；外部传进来的过期/伪造 id 一律落回「未归类」。 */
+function resolveGroupId(state, value) {
+  return typeof value === 'string' && state.groups.some((group) => group.id === value) ? value : null
 }
 
 function nextOrder(list) {
@@ -679,13 +739,43 @@ async function runOp(op, payload) {
       } catch (error) {
         throw fail(`这个目录不可写：${error.message}`)
       }
+      let mergeNote = ''
       if (payload.move !== false) {
-        for (const file of [STORE_FILE, SESSIONS_FILE]) {
+        const targetStore = path.join(target, 'store.json')
+        let targetRaw = null
+        try {
+          targetRaw = await fs.readFile(targetStore, 'utf8')
+        } catch (error) {
+          if (!error || error.code !== 'ENOENT') throw fail(`读取目标目录里的记忆失败：${error.message}`)
+        }
+        if (targetRaw === null) {
           try {
-            await fs.copyFile(file, path.join(target, path.basename(file)))
+            await fs.copyFile(STORE_FILE, targetStore)
           } catch (error) {
             if (error && error.code !== 'ENOENT') throw fail(`复制记忆数据失败：${error.message}`)
           }
+        } else {
+          let incoming
+          try {
+            incoming = normalizeState(JSON.parse(targetRaw))
+          } catch (error) {
+            throw fail(`目标目录里已有 store.json，但不是合法 JSON，未做任何修改：${error.message}`)
+          }
+          if (incoming.groups.length || incoming.items.length) {
+            // 目标目录不是空库：直接覆盖等于悄悄吞掉那边的记忆。改为条目级合并，
+            // 并把目标原文件留一份 .pre-switch-<时间> 备份，事后可以人工核对。
+            const current = store ?? normalizeState(await readJson(STORE_FILE, null))
+            const merged = mergeStates(current, incoming)
+            const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+            await fs.copyFile(targetStore, `${targetStore}.pre-switch-${stamp}`).catch(() => {})
+            await queueWrite(targetStore, merged.state)
+            mergeNote = `，并与目标目录已有记忆合并（新增 ${merged.added}、更新 ${merged.updated}、删除 ${merged.removed}）`
+          }
+        }
+        try {
+          await fs.copyFile(SESSIONS_FILE, path.join(target, path.basename(SESSIONS_FILE)))
+        } catch (error) {
+          if (error && error.code !== 'ENOENT') throw fail(`复制记忆数据失败：${error.message}`)
         }
       }
       await saveConfig(target)
@@ -693,9 +783,10 @@ async function runOp(op, payload) {
       store = null
       sessions = {}
       loading = null
+      storeReadFailed = false
       writeChain = Promise.resolve()
       const reloaded = await ensureLoaded()
-      return snapshot(reloaded, sessionId, { message: `数据目录已改为 ${target}` })
+      return snapshot(reloaded, sessionId, { message: `数据目录已改为 ${target}${mergeNote}` })
     }
 
     case 'sync.get': {
@@ -813,7 +904,7 @@ async function runOp(op, payload) {
         title: title || '未命名记忆',
         body,
         tags: normalizeTags(payload.tags),
-        groupId: typeof payload.groupId === 'string' ? payload.groupId : null,
+        groupId: resolveGroupId(state, payload.groupId),
         enabled: payload.enabled !== false,
         pinned: payload.pinned === true,
         status: 'active',
@@ -837,13 +928,31 @@ async function runOp(op, payload) {
       }
       if ('body' in patch) item.body = String(patch.body ?? '')
       if ('tags' in patch) item.tags = normalizeTags(patch.tags)
-      if ('groupId' in patch) item.groupId = typeof patch.groupId === 'string' ? patch.groupId : null
+      if ('groupId' in patch) item.groupId = resolveGroupId(state, patch.groupId)
       if ('enabled' in patch) item.enabled = patch.enabled !== false
       if ('pinned' in patch) item.pinned = patch.pinned === true
       if ('status' in patch) item.status = patch.status === 'pending' ? 'pending' : 'active'
       item.updatedAt = nowIso()
       await persist()
       return snapshot(state, sessionId, { message: `已更新「${item.title}」`, focusId: item.id })
+    }
+
+    case 'item.batch': {
+      const ids = Array.isArray(payload.ids) ? payload.ids.filter((id) => typeof id === 'string') : []
+      const patch = payload.patch && typeof payload.patch === 'object' ? payload.patch : {}
+      let changed = 0
+      for (const id of ids) {
+        const item = state.items.find((entry) => entry.id === id)
+        if (!item) continue
+        if ('enabled' in patch) item.enabled = patch.enabled !== false
+        if ('pinned' in patch) item.pinned = patch.pinned === true
+        if ('status' in patch) item.status = patch.status === 'pending' ? 'pending' : 'active'
+        if ('groupId' in patch) item.groupId = resolveGroupId(state, patch.groupId)
+        item.updatedAt = nowIso()
+        changed += 1
+      }
+      await persist()
+      return snapshot(state, sessionId, { message: `已更新 ${changed} 条记忆` })
     }
 
     case 'item.delete': {
@@ -879,7 +988,7 @@ async function runOp(op, payload) {
 
     case 'item.move': {
       const ids = Array.isArray(payload.ids) ? payload.ids.filter((id) => typeof id === 'string') : []
-      const groupId = typeof payload.groupId === 'string' ? payload.groupId : null
+      const groupId = resolveGroupId(state, payload.groupId)
       for (const id of ids) {
         const item = state.items.find((entry) => entry.id === id)
         if (!item) continue
@@ -971,6 +1080,7 @@ async function runOp(op, payload) {
       const parsed = parseImportPayload(payload)
       const { additions, skipped } = planImport(state, parsed)
       const createdGroups = new Map()
+      let itemOrder = nextOrder(state.items)
       for (const { item, groupName } of additions) {
         if (groupName) {
           const existing = state.groups.find((group) => group.name === groupName)
@@ -989,7 +1099,7 @@ async function runOp(op, payload) {
             item.groupId = createdGroups.get(groupName).id
           }
         }
-        item.order = nextOrder(state.items)
+        item.order = itemOrder++
         state.items.push(item)
       }
       await persist()
@@ -1091,12 +1201,37 @@ function sendJson(res, status, value) {
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'cache-control': 'no-store',
+    'x-content-type-options': 'nosniff',
   })
   res.end(body)
 }
 
+/**
+ * 面板是从同源页面发请求的：Origin 缺省或 'null'（file://、沙箱 iframe）之外，
+ * 必须与 Host 同源；Sec-Fetch-Site 只接受 same-origin / none。
+ * 这样即使别的网站用 text/plain 简单请求 POST 过来，也写不进记忆库。
+ */
+function requestFromPanel(req) {
+  const host = req.headers?.host
+  const origin = req.headers?.origin
+  if (origin && origin !== 'null') {
+    try {
+      if (!host || new URL(origin).host !== host) return false
+    } catch {
+      return false
+    }
+  }
+  const site = req.headers?.['sec-fetch-site']
+  if (site && site !== 'same-origin' && site !== 'none') return false
+  return true
+}
+
 async function handleHttp(req, res) {
   try {
+    if (!requestFromPanel(req)) {
+      sendJson(res, 403, { ok: false, error: 'cross-site request refused' })
+      return
+    }
     if (req.method === 'GET') {
       const state = await ensureLoaded()
       sendJson(res, 200, snapshot(state, null))
@@ -1104,6 +1239,12 @@ async function handleHttp(req, res) {
     }
     if (req.method !== 'POST') {
       sendJson(res, 405, { ok: false, error: 'method not allowed' })
+      return
+    }
+    const type = String(req.headers?.['content-type'] ?? '').toLowerCase()
+    if (!type.startsWith('application/json')) {
+      // 不带 JSON content-type 的跨站「简单请求」不需要预检，必须在入口拦掉。
+      sendJson(res, 415, { ok: false, error: 'content-type must be application/json' })
       return
     }
     const raw = await readBody(req)
@@ -1266,7 +1407,12 @@ export function apply(ctx) {
       const state = await ensureLoaded()
       const text = buildInjection(state, sessionId)
       if (!text) return decision
-      if (lastInjected.get(sessionId) === text) return decision
+      // 只比文本不够：上下文压缩会把上一次的 recall 消息裁掉，这时即使文本没变
+      // 也必须重新注入，否则这一轮之后模型就再也看不到记忆了。
+      const recallInContext =
+        Array.isArray(decision.messages) &&
+        decision.messages.some((message) => message?.source?.kind === `plugin:${PLUGIN_ID}`)
+      if (recallInContext && lastInjected.get(sessionId) === text) return decision
       lastInjected.set(sessionId, text)
       log('info', `注入记忆 ${text.length} 字符`, { session: sessionId })
       return {

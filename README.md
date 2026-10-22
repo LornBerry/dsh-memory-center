@@ -29,6 +29,15 @@ DSH 的「长期记忆」面板插件：**你自己看得见、改得动、决�
 - 真要发版：去掉 `package.json` 的 `"private": true`，`npm version patch` + `npm publish`；本地开发可以继续用 link 安装，互不影响。
 - 每次改完记得 `git add -A && git commit && git push`，并打 tag 作为回滚点。
 
+## 加固（v0.2.1）
+
+- 库文件坏了不再让插件永久卡死：第一次请求报错并指出文件路径（文件不动），第二次自动备份成 `store.json.corrupt-<时间>` 再重建空库；修好文件后无需重启就能读。
+- 切换数据目录落到一个已有记忆的目录时改为合并而不是覆盖，先把目标原文件备份成 `store.json.pre-switch-<时间>`。
+- 注入去重同时检查那条 recall 消息是否还在上下文里，被压缩裁掉后会重新注入。
+- 面板接口要求 `application/json` 且同源（或 Origin 缺省 / `null`），`Sec-Fetch-Site` 只认 same-origin/none，跨站页面既不能读也不能写。
+- 批量启停/移动/删除走一次 `item.batch`；导入条目顺序连续编号；超长注入按码点截断；Git 命令 30 秒超时、不弹交互式密码提示；会话记录按 180 天清理。
+- 自测新增 `dev/resilience.test.mjs`，`dev/host-smoke.mjs` 覆盖 415/403、无效 groupId、批量与切换合并。
+
 ## 你会看到什么
 
 | 位置 | 组件 | 作用 |

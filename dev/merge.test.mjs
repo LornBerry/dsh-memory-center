@@ -104,6 +104,14 @@ it('条目指向的文件夹在合并后不存在时，落回未归类', () => {
   assert.equal(state.items[0].groupId, null)
 })
 
+it('清理无效 groupId 时不修改传入的对象（纯函数）', () => {
+  const localItem = item('m1', '2026-01-02T00:00:00.000Z', { groupId: 'gone' })
+  const local = store([localItem])
+  const { state } = mergeStates(local, store([]))
+  assert.equal(state.items[0].groupId, null)
+  assert.equal(localItem.groupId, 'gone')
+})
+
 it('两边完全一致时 changed 为 false（不会天天产生提交）', () => {
   const local = store([item('m1', '2026-01-02T00:00:00.000Z')])
   const remote = store([item('m1', '2026-01-02T00:00:00.000Z')])

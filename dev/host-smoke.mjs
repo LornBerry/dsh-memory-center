@@ -47,10 +47,11 @@ const ctx = {
 mod.apply(ctx)
 if (typeof handler !== 'function') throw new Error('路由没有注册')
 
-async function call(method, payload) {
+async function call(method, payload, headers = {}) {
   const body = payload ? Buffer.from(JSON.stringify(payload), 'utf8') : Buffer.alloc(0)
   const req = {
     method,
+    headers: { 'content-type': 'application/json', ...headers },
     async *[Symbol.asyncIterator]() {
       if (body.length) yield body
     },
@@ -104,6 +105,53 @@ for (const file of [path.join(target, 'config.json'), pointer]) {
 const again = await call('POST', { op: 'config.get' })
 expect('再次 config.get 的 dataDir', again.body.dataDir, (v) => path.resolve(v) === path.resolve(target), '没读回配置')
 
+// 4b) HTTP 硬化：非 JSON / 跨站请求在入口就被拒绝
+const plainText = await call('POST', { op: 'config.get' }, { 'content-type': 'text/plain' })
+expect('text/plain 被拒', plainText.status, (v) => v === 415, '应返回 415')
+const crossSite = await call('POST', { op: 'config.get' }, { origin: 'http://evil.example' })
+expect('跨站 Origin 被拒', crossSite.status, (v) => v === 403, '应返回 403')
+const crossFetch = await call('GET', null, { 'sec-fetch-site': 'cross-site' })
+expect('跨站 Sec-Fetch-Site 被拒', crossFetch.status, (v) => v === 403, '应返回 403')
+const sameOrigin = await call('POST', { op: 'config.get' }, { origin: 'http://127.0.0.1:1234', host: '127.0.0.1:1234' })
+expect('同源 JSON 正常放行', sameOrigin.status, (v) => v === 200, '应返回 200')
+
+// 4c) groupId 不存在时落回未归类
+const created = await call('POST', { op: 'item.create', title: '测试条目', body: 'x', groupId: 'no-such-group' })
+const createdItem = created.body.items?.find((entry) => entry.title === '测试条目')
+expect('create 无效 groupId 落回未归类', createdItem?.groupId, (v) => v === null, '应为 null')
+const updated = await call('POST', { op: 'item.update', id: createdItem?.id, patch: { groupId: 'no-such-group' } })
+expect('update 无效 groupId 落回未归类', updated.body.items?.find((entry) => entry.id === createdItem?.id)?.groupId, (v) => v === null, '应为 null')
+
+// 4d) item.batch 一次改多条
+const second = await call('POST', { op: 'item.create', title: '批量B', body: 'y' })
+const secondItem = second.body.items?.find((entry) => entry.title === '批量B')
+const batch = await call('POST', { op: 'item.batch', ids: [createdItem?.id, secondItem?.id], patch: { enabled: false } })
+const disabled = (batch.body.items ?? []).filter((entry) => [createdItem?.id, secondItem?.id].includes(entry.id) && entry.enabled === false)
+expect('item.batch 一次停用两条', disabled.length, (v) => v === 2, '应 2 条停用')
+
+// 4e) 切到已有记忆的目录：合并且保留目标原文件备份，不能直接覆盖
+const occupied = path.join(tmpRoot, 'occupied')
+await fs.mkdir(occupied, { recursive: true })
+const stamp = new Date().toISOString()
+await fs.writeFile(
+  path.join(occupied, 'store.json'),
+  JSON.stringify({
+    version: 1,
+    updatedAt: stamp,
+    groups: [],
+    items: [
+      { id: 'old-1', title: '目标已有', body: '来自另一个库', tags: [], groupId: null, enabled: true, pinned: false, status: 'active', source: 'manual', order: 0, createdAt: stamp, updatedAt: stamp },
+    ],
+    deleted: [],
+  }),
+  'utf8',
+)
+const switched = await call('POST', { op: 'config.set', dir: occupied })
+expect('切到已有记忆的目录会合并而非覆盖', switched.body.items?.some((entry) => entry.title === '目标已有'), (v) => v === true, '目标条目应存在')
+expect('切换后原有条目仍在', switched.body.items?.length, (v) => v >= 3, '应有种子 + 合并条目')
+const backups = (await fs.readdir(occupied)).filter((name) => name.startsWith('store.json.pre-switch-'))
+expect('切换前备份了目标原文件', backups.length, (v) => v >= 1, '应有 .pre-switch- 备份')
+
 // 5) 默认模式（没有 DSH_MEMORY_CONFIG）：配置文件应落在数据目录内部，不会另找地方
 delete process.env.DSH_MEMORY_CONFIG
 let handler2 = null
@@ -134,6 +182,7 @@ async function call2(method, payload) {
   const body = payload ? Buffer.from(JSON.stringify(payload), 'utf8') : Buffer.alloc(0)
   const req = {
     method,
+    headers: { 'content-type': 'application/json' },
     async *[Symbol.asyncIterator]() {
       if (body.length) yield body
     },

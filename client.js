@@ -1085,7 +1085,7 @@ window.__ModuleLoader__.load({
         clearSelect()
       }
       const batchPatch = async (ids, patch) => {
-        for (const id of ids) await run('item.update', { id, patch })
+        await run('item.batch', { ids, patch })
         clearSelect()
       }
       const openMenu = (event, kind, id) => {
