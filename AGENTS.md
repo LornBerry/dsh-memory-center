@@ -60,12 +60,19 @@
 - 因此仓库本地 git 配置里有：
 
   ```
-  http.curloptResolve = github.com:443:140.82.112.3
+  http.curloptResolve = github.com:443:140.82.121.3
+  http.version = HTTP/1.1
   ```
 
-  若 `git push` 报连接超时，先 `git config --get http.curloptResolve` 确认这条还在；没了就重新设。
-  140.82.112.3 有时也不通，可临时换 `-c http.curloptResolve=github.com:443:140.82.113.3`（或 `.114.3`）逐个试。
-- 需要直接访问 github.com 的 HTTP 接口时，用 `curl --resolve github.com:443:140.82.112.3 ...`。
+- **`http.version = HTTP/1.1` 是必须的**：这套网络里 git 默认走 HTTP/2，握手后会被连接重置（`Recv failure: Connection was reset`、
+  `schannel: server closed abruptly (missing close_notify)`、`Failed to connect ... after 21034 ms`）。
+  同样的 IP 用 `curl.exe --resolve github.com:443:<ip> https://github.com/` 能拿到 200，用 HTTP/1.1 推就能成功——所以报错先看这条配置在不在。
+- 若 `git push` 报连接超时，按顺序排查：
+  1. `git config --get http.version`（应为 `HTTP/1.1`）；
+  2. `git config --get http.curloptResolve`（IP 会变，过几天可能失效）；
+  3. 换 IP：`140.82.121.3` / `140.82.114.3` / `140.82.113.3` / `140.82.112.3` 逐个试
+     `git -c http.curloptResolve=github.com:443:<ip> push origin main`，成功后就 `git config http.curloptResolve ...` 记下来。
+- 需要直接访问 github.com 的 HTTP 接口时：`curl --resolve github.com:443:140.82.121.3 ...`。
 
 ## 自测
 
