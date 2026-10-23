@@ -28,14 +28,26 @@ const MAX_INJECT_CHARS = Number(process.env.DSH_MEMORY_MAX_CHARS || 12000)
 /**
  * 压缩阈值：记忆总量超过「上限 × 该比例」时，注入开始压缩（超出部分只给标题）。
  * 默认 80%——留 20% 余量给统计行、索引清单和以后新增的记忆，避免一加就爆。
- * 可用 DSH_MEMORY_COMPRESS_RATIO 调整（0.1–1，非法值回退 0.8）。
+ * 优先级：环境变量 DSH_MEMORY_COMPRESS_RATIO > 面板里拖过的值（存在 config.json 的 injectRatio）> 0.8。
  */
-const COMPRESS_RATIO = (() => {
-  const raw = Number(process.env.DSH_MEMORY_COMPRESS_RATIO)
-  if (!Number.isFinite(raw) || raw < 0.1 || raw > 1) return 0.8
-  return raw
-})()
-const SOFT_INJECT_CHARS = Math.max(1000, Math.floor(MAX_INJECT_CHARS * COMPRESS_RATIO))
+const DEFAULT_COMPRESS_RATIO = 0.8
+
+/** 0.1–1 之间返回两位小数，否则返回 null（调用方决定回退还是报错）。 */
+function parseRatio(raw) {
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value < 0.1 || value > 1) return null
+  return Math.round(value * 100) / 100
+}
+
+const ENV_COMPRESS_RATIO = parseRatio(process.env.DSH_MEMORY_COMPRESS_RATIO)
+let COMPRESS_RATIO = ENV_COMPRESS_RATIO ?? DEFAULT_COMPRESS_RATIO
+let SOFT_INJECT_CHARS = Math.max(1000, Math.floor(MAX_INJECT_CHARS * COMPRESS_RATIO))
+
+function applyCompressRatio(ratio) {
+  COMPRESS_RATIO = ratio
+  SOFT_INJECT_CHARS = Math.max(1000, Math.floor(MAX_INJECT_CHARS * ratio))
+}
+
 const PLUGIN_ID = 'dsh-memory-center'
 
 /**
@@ -76,7 +88,11 @@ async function readConfigDir(file) {
 
 async function loadConfig() {
   await loadDataDir()
-  sync = normalizeSync((await readConfigFile(CONFIG_FILE)).sync)
+  const config = await readConfigFile(CONFIG_FILE)
+  sync = normalizeSync(config.sync)
+  // 面板里拖过的压缩阈值；环境变量优先，设了环境变量就不读盘上的值。
+  const savedRatio = parseRatio(config.injectRatio)
+  if (ENV_COMPRESS_RATIO === null && savedRatio !== null) applyCompressRatio(savedRatio)
   if (gitOk === null) gitOk = await hasGit()
 }
 
@@ -736,6 +752,7 @@ function capacityOf(state) {
     limit: MAX_INJECT_CHARS,
     softLimit: SOFT_INJECT_CHARS,
     threshold: COMPRESS_RATIO,
+    ratioLocked: ENV_COMPRESS_RATIO !== null,
     chars: total,
     items: live.length,
     ratio: SOFT_INJECT_CHARS > 0 ? Math.min(1, total / SOFT_INJECT_CHARS) : 0,
@@ -984,7 +1001,24 @@ async function runOp(op, payload) {
         configFile: CONFIG_FILE,
         envLocked: Boolean(process.env.DSH_MEMORY_DIR),
         writable: await canWriteDir(DATA_DIR),
+        injectRatio: COMPRESS_RATIO,
+        softLimit: SOFT_INJECT_CHARS,
+        maxChars: MAX_INJECT_CHARS,
+        ratioLocked: ENV_COMPRESS_RATIO !== null,
       }
+
+    case 'budget.set': {
+      if (ENV_COMPRESS_RATIO !== null) {
+        throw fail('压缩阈值已被环境变量 DSH_MEMORY_COMPRESS_RATIO 固定，请先去掉该变量再在面板里调')
+      }
+      const ratio = parseRatio(payload.ratio)
+      if (ratio === null) throw fail('压缩阈值要在 0.1–1 之间，例如 0.8 表示“用到上限的 80% 就开始压缩”')
+      applyCompressRatio(ratio)
+      await saveConfig(DATA_DIR, { injectRatio: ratio })
+      return snapshot(state, sessionId, {
+        message: `压缩阈值已设为 ${Math.round(ratio * 100)}%（压缩线 ${SOFT_INJECT_CHARS} 字符）`,
+      })
+    }
 
     case 'config.set': {
       if (process.env.DSH_MEMORY_DIR) {

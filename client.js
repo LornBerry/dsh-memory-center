@@ -60,6 +60,10 @@ window.__ModuleLoader__.load({
         .dmc-budget-text { margin-top: 3px; letter-spacing: .2px; }
         .dmc-cap { font-size: 13px; }
         .dmc-cap-row { display: flex; align-items: baseline; gap: 10px; padding: 3px 0; border-bottom: 1px dashed rgba(127,127,127,.16); }
+.dmc-ratio { margin: 12px 0 4px; padding: 10px; border: 1px solid rgba(127,127,127,.18); border-radius: 8px; }
+.dmc-range { width: 100%; margin: 8px 0 10px; accent-color: #2ea078; }
+.dmc-range:disabled { opacity: .5; }
+.dmc-btn-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
         .dmc-cap-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .dmc-cap-num { flex: none; opacity: .62; font-variant-numeric: tabular-nums; }
         .dmc-row { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
@@ -481,13 +485,17 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function CapacityDialog({ capacity, injection, onClose, onArchiveFolder }) {
+    function CapacityDialog({ capacity, injection, onClose, onArchiveFolder, onSetRatio }) {
       const cap = capacity || {}
       const folders = (cap.folders || []).slice().sort((a, b) => b.chars - a.chars)
       const longest = cap.longest || []
       const softLimit = cap.softLimit || Math.floor((cap.limit || 0) * (cap.threshold || 0.8))
       const ratio = Math.min(100, Math.round((cap.ratio || 0) * 100))
-      const thresholdPct = Math.round((cap.threshold || 0.8) * 100)
+      const savedThreshold = Math.round((cap.threshold || 0.8) * 100)
+      const thresholdPct = savedThreshold
+      const [draft, setDraft] = useState(savedThreshold)
+      const draftLimit = Math.round(((cap.limit || 0) * draft) / 100)
+      const ratioLocked = Boolean(cap.ratioLocked)
       const rows = [
         h(
           'div',
@@ -509,6 +517,52 @@ window.__ModuleLoader__.load({
           { key: 'ratio', className: 'dmc-card-hint', style: { marginBottom: '10px' } },
           `全部启用记忆共 ${formatK(cap.chars || 0)} 字符（${cap.items || 0} 条），是压缩线的 ${ratio}%。`,
           cap.over ? ' 已超过压缩线：超出部分只给标题，需要在提问里用到就用 memory_search 取。' : '',
+        ),
+        h(
+          'div',
+          { key: 'slider', className: 'dmc-ratio' },
+          h(
+            'div',
+            { className: 'dmc-card-hint' },
+            ratioLocked
+              ? '压缩阈值被环境变量 DSH_MEMORY_COMPRESS_RATIO 固定，面板里不能改。'
+              : `压缩阈值：记忆用到上限的 ${draft}% 就开始压缩（约 ${formatK(draftLimit)} 字符）。往左更省、往右更全。`,
+          ),
+          h('input', {
+            className: 'dmc-range',
+            type: 'range',
+            min: 10,
+            max: 100,
+            step: 5,
+            value: draft,
+            disabled: ratioLocked,
+            'aria-label': '压缩阈值',
+            onChange: (event) => setDraft(Number(event.target.value)),
+          }),
+          h(
+            'div',
+            { className: 'dmc-btn-row' },
+            h(
+              'button',
+              {
+                className: 'dmc-btn primary',
+                type: 'button',
+                disabled: ratioLocked || draft === savedThreshold,
+                onClick: () => onSetRatio && onSetRatio(draft / 100),
+              },
+              draft === savedThreshold ? '已生效' : `应用 ${draft}%`,
+            ),
+            h(
+              'button',
+              {
+                className: 'dmc-btn',
+                type: 'button',
+                disabled: ratioLocked || savedThreshold === 80,
+                onClick: () => onSetRatio && onSetRatio(0.8),
+              },
+              '恢复 80%',
+            ),
+          ),
         ),
         h('div', { key: 'h1', style: { fontWeight: 600, margin: '6px 0' } }, '哪几个文件夹最占地方'),
         ...(folders.length
@@ -2356,6 +2410,7 @@ window.__ModuleLoader__.load({
               capacity: data.capacity,
               injection: data.injection,
               onClose: () => setCapacityOpen(false),
+              onSetRatio: (value) => run('budget.set', { ratio: value }),
               onArchiveFolder: () => {
                 setCapacityOpen(false)
                 setFilter('__archived')

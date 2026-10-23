@@ -119,6 +119,19 @@ const withAnchor = await call({ op: 'state', sessionId })
 expect('完全锚点进了正文', withAnchor.preview.includes(last.body), (v) => v === true, '完全锚点不应被预算挤掉')
 expect('锚点计数 = 1', withAnchor.injection.anchors >= 1, (v) => v === true, 'anchors 应统计到')
 
+// 面板拖条：budget.set 立即生效并写进 config.json
+const beforeRatio = withAnchor.injection.softLimit
+const tighter = await call({ op: 'budget.set', ratio: 0.5 })
+expect('budget.set 成功', tighter.ok, (v) => v === true, '应返回快照')
+expect('阈值改 0.5 后压缩线', tighter.injection.softLimit, (v) => v === 1250, '2500 × 0.5')
+expect('压缩线确实变小', tighter.injection.softLimit < beforeRatio, (v) => v === true, '应比 0.8 时更小')
+const savedConfig = JSON.parse(await fs.readFile(path.join(dataDir, 'config.json'), 'utf8'))
+expect('config.json 记住 injectRatio', savedConfig.injectRatio, (v) => v === 0.5, '应持久化到数据目录的 config.json')
+const invalid = await call({ op: 'budget.set', ratio: 3 })
+expect('非法阈值被拒', invalid.ok, (v) => v === false, '超出 0.1–1 应报错')
+const restored = await call({ op: 'budget.set', ratio: 0.8 })
+expect('改回 0.8', restored.injection.softLimit, (v) => v === 2000, '恢复默认压缩线')
+
 // 预算放大后应全部展开（重新导入一份模块，环境变量在模块加载时读取）
 process.env.DSH_MEMORY_MAX_CHARS = '100000'
 let handler2 = null
