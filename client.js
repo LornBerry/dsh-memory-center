@@ -142,6 +142,15 @@ window.__ModuleLoader__.load({
         .dmc-crumb-sep { opacity: .4; }
         .dmc-batch { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 6px 8px; margin: 4px 0; border-radius: 8px; background: rgba(93,140,255,.12); border: 1px solid rgba(93,140,255,.35); }
         .dmc-check { flex: 0 0 auto; margin: 0; }
+        /* 「选择要带入本会话的记忆」弹层：文件夹与单条混选 */
+        .dmc-pick-tools { display: flex; align-items: center; gap: 6px; }
+        .dmc-pick-count { margin-left: auto; font-size: 12px; opacity: .7; }
+        .dmc-pick-label { font-size: 12px; opacity: .65; margin-top: 2px; }
+        .dmc-pick-scroll { max-height: 230px; overflow: auto; display: flex; flex-direction: column; gap: 1px; padding: 4px; border: 1px solid rgba(128,128,128,.2); border-radius: 8px; }
+        .dmc-pick-row { display: flex; align-items: center; gap: 8px; padding: 5px 6px; border-radius: 6px; cursor: pointer; }
+        .dmc-pick-row:hover { background: rgba(128,128,128,.12); }
+        .dmc-pick-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+        .dmc-pick-meta { flex: 0 0 auto; font-size: 11px; opacity: .6; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .dmc-item { position: relative; }
         .dmc-item.is-selected { border-color: rgba(93,140,255,.75); box-shadow: 0 0 0 1px rgba(93,140,255,.45) inset; }
         .dmc-item-head { align-items: center; }
@@ -1016,6 +1025,7 @@ window.__ModuleLoader__.load({
     function SessionPicker({ data, sessionId, compact }) {
       const session = data.session || {}
       const [picking, setPicking] = useState(false)
+      const [sheet, setSheet] = useState(false)
       const [groupIds, setGroupIds] = useState(session.groupIds || [])
 
       useEffect(() => {
@@ -1117,10 +1127,22 @@ window.__ModuleLoader__.load({
                   'div',
                   { className: 'dmc-actions' },
                   h('button', { className: 'dmc-btn primary', onClick: () => run('session.set', { sessionId, mode: 'custom', groupIds }) }, '应用'),
+                  h(
+                    'button',
+                    {
+                      className: 'dmc-btn',
+                      onClick: () => {
+                        setPicking(false)
+                        setSheet(true)
+                      },
+                    },
+                    '按条选…',
+                  ),
                 ),
               )
             : null,
         ),
+        sheet ? h(FolderPicker, { onClose: () => setSheet(false) }) : null,
         compact
           ? null
           : h(
@@ -2682,22 +2704,92 @@ window.__ModuleLoader__.load({
       const state = useStore()
       const data = state.data
       const sessionId = activeSessionId
-      const items = (data && data.items) || []
-      const folders = (data && data.groups) || []
-      const activeCount = (groupId) =>
-        items.filter((item) => item.groupId === groupId && item.status === 'active' && item.enabled).length
-      const load = async (groupId) => {
-        if (!sessionId) return
-        if (groupId === null) {
-          const ids = items
-            .filter((item) => !item.groupId && item.status === 'active' && item.enabled)
-            .map((item) => item.id)
-          await run('session.set', { sessionId, mode: ids.length ? 'custom' : 'none', groupIds: [], itemIds: ids })
-        } else {
-          await run('session.set', { sessionId, mode: 'custom', groupIds: [groupId], itemIds: [] })
+      const [query, setQuery] = useState('')
+      const [picked, setPicked] = useState(() => {
+        const current = (data && data.session) || {}
+        return {
+          groups: new Set(current.groupIds || []),
+          items: new Set(current.itemIds || []),
         }
+      })
+
+      const all = (data && data.items) || []
+      const folders = (data && data.groups) || []
+      const items = all.filter((item) => item.status === 'active' && item.enabled)
+      const loose = items.filter((item) => !item.groupId)
+      const inFolder = (item) => Boolean(item.groupId && picked.groups.has(item.groupId))
+      const isPicked = (item) => inFolder(item) || picked.items.has(item.id)
+      const chosen = items.filter(isPicked)
+      const countOf = (groupId) => items.filter((item) => item.groupId === groupId).length
+
+      const toggleGroup = (groupId) => {
+        setPicked((prev) => {
+          const groups = new Set(prev.groups)
+          const ids = new Set(prev.items)
+          if (groups.has(groupId)) {
+            groups.delete(groupId)
+          } else {
+            groups.add(groupId)
+            for (const item of items) if (item.groupId === groupId) ids.delete(item.id)
+          }
+          return { groups, items: ids }
+        })
+      }
+
+      const toggleItem = (item) => {
+        if (inFolder(item)) return
+        setPicked((prev) => {
+          const ids = new Set(prev.items)
+          if (ids.has(item.id)) ids.delete(item.id)
+          else ids.add(item.id)
+          return { groups: new Set(prev.groups), items: ids }
+        })
+      }
+
+      const pickAll = () =>
+        setPicked({ groups: new Set(folders.map((folder) => folder.id)), items: new Set(items.filter((item) => !item.groupId).map((item) => item.id)) })
+      const pickNone = () => setPicked({ groups: new Set(), items: new Set() })
+
+      const keyword = query.trim().toLowerCase()
+      const listed = (keyword
+        ? items.filter((item) => `${item.title}\n${item.body}\n${item.tags.join(' ')}`.toLowerCase().includes(keyword))
+        : items
+      )
+        .slice()
+        .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))
+        .slice(0, 80)
+
+      const save = async () => {
+        if (!sessionId) return
+        const groupIds = [...picked.groups]
+        const itemIds = [...picked.items].filter((id) => {
+          const item = items.find((entry) => entry.id === id)
+          return item && !inFolder(item)
+        })
+        await run('session.set', {
+          sessionId,
+          mode: chosen.length ? 'custom' : 'none',
+          groupIds,
+          itemIds,
+        })
         onClose()
       }
+
+      const row = (key, checked, disabled, onToggle, name, meta, note) =>
+        h(
+          'label',
+          { key, className: 'dmc-pick-row', title: note || '' },
+          h('input', {
+            type: 'checkbox',
+            className: 'dmc-check',
+            checked,
+            disabled,
+            onChange: onToggle,
+          }),
+          h('span', { className: 'dmc-pick-name' }, name),
+          meta ? h('span', { className: 'dmc-pick-meta' }, meta) : null,
+        )
+
       return h(
         'div',
         {
@@ -2708,34 +2800,88 @@ window.__ModuleLoader__.load({
         },
         h(
           'div',
-          { className: 'dmc-modal', style: { width: 'min(520px, 100%)' } },
-          h('div', { className: 'dmc-modal-head' }, '选一个文件夹加载'),
+          { className: 'dmc-modal', style: { width: 'min(560px, 100%)' } },
+          h('div', { className: 'dmc-modal-head' }, '选择要带入本会话的记忆'),
           h(
             'div',
             { className: 'dmc-modal-body' },
             h(
               'div',
               { className: 'dmc-card-hint' },
-              '点一下 = 这个文件夹里的记忆全部加入本会话（下一轮生效）。之后还能在输入框的「记忆」里改。',
+              '可以勾整个文件夹，也可以只勾几条具体记忆——不喜欢分类就按条选。保存后下一轮生效。',
             ),
             h(
               'div',
-              { className: 'dmc-actions', style: { flexDirection: 'column', alignItems: 'stretch' } },
-              ...folders.map((folder) =>
-                h(
-                  'button',
-                  { key: folder.id, className: 'dmc-btn', style: { textAlign: 'left' }, onClick: () => load(folder.id) },
-                  `${folder.name} · ${activeCount(folder.id)} 条`,
-                ),
-              ),
-              h(
-                'button',
-                { className: 'dmc-btn', style: { textAlign: 'left' }, onClick: () => load(null) },
-                `未归类 · ${activeCount(null)} 条`,
-              ),
+              { className: 'dmc-pick-tools' },
+              h('button', { className: 'dmc-btn', onClick: pickAll }, '全选'),
+              h('button', { className: 'dmc-btn', onClick: pickNone }, '清空'),
+              h('span', { className: 'dmc-pick-count' }, `已选 ${chosen.length} 条`),
+            ),
+            folders.length
+              ? h(
+                  'div',
+                  { className: 'dmc-pick-label' },
+                  '按文件夹（整组带入；组里以后新增的条目也会自动带上）',
+                )
+              : null,
+            folders.length
+              ? h(
+                  'div',
+                  { className: 'dmc-pick-scroll' },
+                  ...folders.map((folder) =>
+                    row(
+                      folder.id,
+                      picked.groups.has(folder.id),
+                      false,
+                      () => toggleGroup(folder.id),
+                      folder.name,
+                      `${countOf(folder.id)} 条`,
+                    ),
+                  ),
+                )
+              : null,
+            loose.length
+              ? h(
+                  'div',
+                  { className: 'dmc-pick-label' },
+                  `未归类（${loose.length} 条，只能按条选）`,
+                )
+              : null,
+            h(
+              'div',
+              { className: 'dmc-pick-label' },
+              '按单条',
+            ),
+            h('input', {
+              className: 'dmc-input',
+              placeholder: '在下面筛选标题 / 正文 / 标签…',
+              value: query,
+              onChange: (event) => setQuery(event.target.value),
+            }),
+            h(
+              'div',
+              { className: 'dmc-pick-scroll' },
+              listed.length
+                ? listed.map((item) =>
+                    row(
+                      item.id,
+                      isPicked(item),
+                      inFolder(item),
+                      () => toggleItem(item),
+                      `${item.anchorMode === 'full' ? '★ ' : ''}${item.title}`,
+                      groupName(data, item.groupId) || '未归类',
+                      inFolder(item) ? '已在所选文件夹里，取消文件夹勾选即可单独排除' : '',
+                    ),
+                  )
+                : h('div', { className: 'dmc-card-hint' }, keyword ? '没有匹配的记忆' : '还没有可用的记忆'),
             ),
           ),
-          h('div', { className: 'dmc-modal-foot' }, h('button', { className: 'dmc-btn', onClick: onClose }, '取消')),
+          h(
+            'div',
+            { className: 'dmc-modal-foot' },
+            h('button', { className: 'dmc-btn', onClick: onClose }, '取消'),
+            h('button', { className: 'dmc-btn primary', onClick: save }, chosen.length ? `加入 ${chosen.length} 条` : '都不加载'),
+          ),
         ),
       )
     }
@@ -2744,7 +2890,7 @@ window.__ModuleLoader__.load({
       const state = useStore()
       const sessionId = props.sessionId
       const data = state.data
-      const [picking, setPicking] = useState(false)
+      const [picking, setPicking] = useState((props && props.debugPicking) || false)
 
       useEffect(() => {
         activeSessionId = sessionId || activeSessionId
@@ -2763,12 +2909,12 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'dmc-card-hint' },
-          `记忆库里现在有 ${data.stats.enabled} 条启用记忆、${data.stats.groups} 个文件夹。选一个文件夹就能整组带进来，不用一条条挑。`,
+          `记忆库里现在有 ${data.stats.enabled} 条启用记忆、${data.stats.groups} 个文件夹。可以整组带入，也可以只挑几条。`,
         ),
         h(
           'div',
           { className: 'dmc-card-row' },
-          h('button', { className: 'dmc-btn primary', onClick: () => setPicking(true) }, '选文件夹…'),
+          h('button', { className: 'dmc-btn primary', onClick: () => setPicking(true) }, '选记忆…'),
           h('button', { className: 'dmc-btn', onClick: () => choose('all') }, '全部加载'),
           h('button', { className: 'dmc-btn', onClick: () => choose('none') }, '不加载'),
           h('button', { className: 'dmc-btn', onClick: () => openPanel(PANEL_ID) }, '打开记忆面板'),

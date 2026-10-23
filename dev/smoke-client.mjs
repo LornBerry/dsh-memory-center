@@ -334,7 +334,17 @@ const panelStates = [
   },
 ]
 
-const panelStatesFor = (name) => (name === 'main' || name === 'settings.section' ? panelStates : [{ label: '', props: {} }])
+const panelStatesFor = (name) => {
+  if (name === 'main' || name === 'settings.section') return panelStates
+  // 输入框上方的询问卡片：默认态 + 打开「选记忆」弹层（文件夹 & 单条混选）
+  if (name === 'conversation.input.dock') {
+    return [
+      { label: '', props: {} },
+      { label: ' picking', props: { debugPicking: true } },
+    ]
+  }
+  return [{ label: '', props: {} }]
+}
 
 for (const { options, component } of registrations) {
   const states = options.name === 'sidebar.panellist' ? variants.map((props) => ({ label: ` size=${props.size}`, props })) : panelStatesFor(options.name)
