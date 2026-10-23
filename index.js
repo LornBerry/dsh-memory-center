@@ -1438,7 +1438,8 @@ async function runOp(op, payload) {
           continue
         }
         const guessed = inferAnchor({ title: item.title, body: item.body, tags: item.tags })
-        if (item.anchorMode !== guessed.mode || !item.anchorSource) {
+        // 理由也要刷新：判出来是「不设锚点」时旧理由（例如迁移时的占位文案）会一直留着
+        if (item.anchorMode !== guessed.mode || item.anchorSource !== 'inferred' || item.anchorWhy !== guessed.why) {
           item.anchorMode = guessed.mode
           item.anchorSource = 'inferred'
           item.anchorWhy = guessed.why
