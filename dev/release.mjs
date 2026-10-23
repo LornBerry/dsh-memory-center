@@ -95,6 +95,21 @@ if (!skipTests) {
 
 /* -------------------------------------------------------------- 2. 改版本号 */
 
+// 2026-10-23 两次踩同一个坑：新增 lib/xxx.js 忘了写进 package.json 的 files，
+// 打出的 tgz 缺文件 → install_bundle 之后 entry import 失败 → 插件直接消失。
+// 与其靠人记得，不如打包前把 lib/ 里所有 .js 自动补进 files。
+const libEntries = existsSync(path.join(ROOT, 'lib'))
+  ? readdirSync(path.join(ROOT, 'lib'))
+      .filter((entry) => entry.endsWith('.js'))
+      .map((entry) => `lib/${entry}`)
+  : []
+pkg.files = [...(pkg.files || [])]
+const missingLib = libEntries.filter((entry) => !pkg.files.includes(entry))
+if (missingLib.length) {
+  pkg.files.push(...missingLib)
+  console.log(`\n已自动把缺少的模块补进 package.json 的 files：${missingLib.join(', ')}`)
+}
+
 const next = bump(pkg.version, target)
 pkg.version = next
 if (dryRun) {
