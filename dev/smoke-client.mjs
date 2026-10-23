@@ -187,6 +187,7 @@ const snapshot = {
       deletedAt: '2026-10-22T01:00:00.000Z',
     },
   ],
+  recycle: { keepDays: 30, autoPurge: true, count: 1 },
   session: { sessionId: 'smoke', decided: false, mode: 'none', groupIds: [], itemIds: [], count: 0, groupCount: 0 },
   preview: '## 用户长期记忆\n\n- 记忆数据放在 E 盘',
   sync: {

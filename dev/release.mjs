@@ -25,10 +25,30 @@ const DIST = process.env.DSH_MEMORY_DIST || 'E:\\dsh-data\\memory-center-dist'
 
 const args = process.argv.slice(2)
 const skipTests = args.includes('--skip-tests')
+const dryRun = args.includes('--dry-run')
+const force = args.includes('--force')
 const target = args.find((a) => !a.startsWith('--')) || 'patch'
 
 const PKG_FILE = path.join(ROOT, 'package.json')
-const pkg = JSON.parse(readFileSync(PKG_FILE, 'utf8').replace(/^\uFEFF/, ''))
+const ORIGINAL_PKG = readFileSync(PKG_FILE, 'utf8')
+const pkg = JSON.parse(ORIGINAL_PKG.replace(/^\uFEFF/, ''))
+
+/* ------------------------------------------------- 0. 工作区必须干净 */
+
+// 2026-10-23 评审踩过：有未提交改动也照发，会把半成品打成 tgz 装进线上。
+if (!force) {
+  let dirty = ''
+  try {
+    dirty = execFileSync('git', ['status', '--porcelain'], { cwd: ROOT, encoding: 'utf8' }).trim()
+  } catch {
+    console.warn('（没有 git 仓库，跳过工作区干净检查）')
+  }
+  if (dirty) {
+    console.error(`\n工作区有未提交的改动，拒绝发版：\n${dirty}\n\n先提交，或确实要发就加 --force。`)
+    process.exit(1)
+  }
+}
+
 
 function bump(version, target) {
   if (/^\d+\.\d+\.\d+$/.test(target)) return target
@@ -65,6 +85,8 @@ if (!skipTests) {
     'dev/resilience.test.mjs',
     'dev/recycle.test.mjs',
     'dev/budget.test.mjs',
+    'dev/fields.test.mjs',
+    'dev/search.test.mjs',
   ]
   for (const test of tests) {
     if (existsSync(path.join(ROOT, test))) run(process.execPath, [test])
@@ -75,11 +97,20 @@ if (!skipTests) {
 
 const next = bump(pkg.version, target)
 pkg.version = next
+if (dryRun) {
+  console.log(`\n--dry-run：只演练，不写文件。\n当前版本 ${JSON.parse(ORIGINAL_PKG).version} → 目标版本 ${next}`)
+  console.log(`打包内容：${[...(pkg.files || []), 'package.json'].join(', ')}`)
+  process.exit(0)
+}
 // 写回时不要 BOM：DSH / pnpm / 一些 JSON 读取器对 BOM 敏感
 writeFileSync(PKG_FILE, `${JSON.stringify(pkg, null, 2)}\n`, 'utf8')
 console.log(`\n版本：${next}`)
 
 /* ---------------------------------------------------------------- 3. 打包 */
+
+// 打包失败（tar 出错、缺文件）就把版本号改回去，别留下一个半成品 package.json
+let tgz = ''
+try {
 
 const staging = mkdtempSync(path.join(tmpdir(), 'dmc-pack-'))
 const packageDir = path.join(staging, 'package')
@@ -93,7 +124,7 @@ for (const file of [...(pkg.files || []), 'package.json']) {
   cpSync(from, path.join(packageDir, file), { recursive: true })
 }
 mkdirSync(DIST, { recursive: true })
-const tgz = path.join(DIST, `dsh-memory-center-${next}.tgz`)
+tgz = path.join(DIST, `dsh-memory-center-${next}.tgz`)
 run('tar', ['-czf', tgz, '-C', staging, 'package'])
 rmSync(staging, { recursive: true, force: true })
 
@@ -130,3 +161,10 @@ const steps = [
   `   git add -A && git commit -m "release: v${next}" && git tag v${next} && git push origin main --tags`,
 ]
 console.log(`\n打包完成：${tgz}\n\n${steps.join('\n')}\n`)
+} catch (error) {
+  // 失败就把 package.json 还原（版本号改回原样），避免留下「版本涨了但没产物」的状态
+  writeFileSync(PKG_FILE, ORIGINAL_PKG, 'utf8')
+  if (tgz) rmSync(tgz, { force: true })
+  console.error(`\n打包失败，已把 package.json 还原：${error.message}`)
+  process.exit(1)
+}

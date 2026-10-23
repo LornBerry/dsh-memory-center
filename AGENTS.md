@@ -86,7 +86,8 @@ node dev/host-smoke.mjs      # 宿主半 API 与目录切换（临时目录）
 node dev/merge.test.mjs      # 两台设备的条目级合并规则
 node dev/sync.test.mjs       # WebDAV 后端（本地假服务器）
 node dev/sync-git.test.mjs   # Git 后端（本地裸仓库扮远端，模拟两台设备）
-node dev/recycle.test.mjs    # 回收站：软删除 / 恢复 / 彻底删除写墓碑 / 批量打标并入
+node dev/recycle.test.mjs    # 回收站：软删除 / 恢复 / 彻底删除写墓碑 / 批量打标 / 到期自动清理
+node dev/fields.test.mjs     # 字段往返：读写一圈后字段不能丢（白名单重建曾丢过 deletedAt/archivedAt）
 node dev/budget.test.mjs     # 注入预算与压缩线：默认 80%、整条不截断、阈值可调
 node dev/search.test.mjs     # 检索：分词 / BM25 / 同义词扩展 / 片段 / 余弦工具
 node dev/doctor.mjs --url http://127.0.0.1:<端口>   # 安装与运行状态自检

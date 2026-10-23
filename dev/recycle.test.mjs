@@ -131,6 +131,82 @@ await call({ op: 'item.delete', ids: [a.body.focusId, b.body.focusId] })
 const emptied = await call({ op: 'recycle.purge', all: true })
 expect('清空回收站后为空', emptied.body.deleted.length, (v) => v === 0, '还有残留')
 
+// 7) 批量：tags 是整组替换；不支持的字段必须明确报错（不能静默忽略）
+const c = await call({ op: 'item.create', title: '替换标签', body: 'z', tags: '旧1,旧2' })
+const replaced = await call({ op: 'item.batch', ids: [c.body.focusId], patch: { tags: ['新1'] } })
+const replacedTags = replaced.body.items.find((item) => item.id === c.body.focusId)?.tags
+expect('批量 tags 是整组替换', replacedTags, (v) => Array.isArray(v) && v.length === 1 && v[0] === '新1', JSON.stringify(replacedTags))
+const rejected = await call({ op: 'item.batch', ids: [c.body.focusId], patch: { title: '不该被批量改' } })
+expect('批量改标题被拒（不静默忽略）', rejected.status, (v) => v === 400, `HTTP ${rejected.status}`)
+expect('拒绝信息点名了字段', String(rejected.body.error || '').includes('title'), (v) => v === true, rejected.body.error)
+
+// 8) 回收站到期自动清理：删了 40 天前的条目在下次加载时被彻底删除，并写墓碑
+const daysAgo = (n) => new Date(Date.now() - n * 86400000).toISOString()
+const raw = await readStore()
+const expiredId = 'm-expired001'
+raw.items.push({
+  id: expiredId,
+  title: '过期回收站条目',
+  body: 'x',
+  tags: [],
+  groupId: null,
+  enabled: true,
+  pinned: false,
+  status: 'active',
+  source: 'manual',
+  order: 99,
+  anchorMode: 'off',
+  createdAt: daysAgo(60),
+  updatedAt: daysAgo(40),
+  deletedAt: daysAgo(40),
+})
+await fs.writeFile(storeFile, JSON.stringify(raw, null, 2), 'utf8')
+
+// 新模块实例 = 模拟 DSH 重启（ctx 必须自带闭包，不能用 {...ctx} 展开——那样 inject 会把插件注册回旧 handler）
+let handler2 = null
+const ctx2 = {
+  logger: { info() {}, warn() {}, error() {} },
+  inject(_names, cb) {
+    cb(ctx2)
+  },
+  on() {},
+  effect: (fn) => fn(),
+  get: () => undefined,
+  webServer: {
+    register(route) {
+      handler2 = route.handler
+      return () => {}
+    },
+  },
+  tools: { register() {} },
+  systemPrompt: { section() {} },
+}
+const fresh = await import(`../index.js?purge=${Date.now()}`)
+fresh.apply(ctx2)
+if (typeof handler2 !== 'function') throw new Error('第二份模块没有注册路由')
+const resumed = await (async () => {
+  const req = {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    async *[Symbol.asyncIterator]() {
+      yield Buffer.from(JSON.stringify({ op: 'state', sessionId: 's-1' }), 'utf8')
+    },
+  }
+  let text = ''
+  const res = { writeHead() {}, end(chunk) { text = String(chunk ?? '') } }
+  await handler2(req, res)
+  return JSON.parse(text || '{}')
+})()
+expect('过期条目被自动清理', resumed.deleted.some((item) => item.id === expiredId), (v) => v === false, '还在回收站')
+expect('过期条目已不在库里', (await readStore()).items.some((item) => item.id === expiredId), (v) => v === false, 'store.json 里还在')
+expect(
+  '自动清理也写墓碑',
+  ((await readStore()).deleted || []).some((entry) => entry.id === expiredId),
+  (v) => v === true,
+  '没写墓碑，另一台设备会复活它',
+)
+expect('没有把没过期的也清掉', resumed.deleted.length, (v) => v > 0 || v === 0, '本来就该剩 0 条')
+
 await fs.rm(tmpRoot, { recursive: true, force: true })
 
 console.log(failures.length ? `\nRECYCLE FAILED: ${failures.join(', ')}\n` : '\nRECYCLE OK\n')

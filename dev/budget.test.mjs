@@ -105,7 +105,8 @@ expect('有未展开小节', state.preview.includes('未展开的记忆'), (v) =
 expect('压缩线 = 上限 × 80%', state.injection.softLimit, (v) => v === 2000, '2500 × 0.8 应等于 2000')
 expect('ratio 默认 0.8', state.injection.ratio, (v) => v === 0.8, '未设 DSH_MEMORY_COMPRESS_RATIO 时默认 0.8')
 expect('软上限低于硬上限', state.injection.softLimit < state.injection.limit, (v) => v === true, '压缩线应留出 20% 余量')
-expect('标记为已压缩', state.injection.compressed, (v) => v === true, '超过压缩线时应压缩')
+expect('标记为已压缩（indexMode）', state.injection.indexMode, (v) => v === true, '超过压缩线时应把条目降级为标题')
+expect('不再保留重复的 compressed 字段', 'compressed' in state.injection, (v) => v === false, 'indexMode 与 compressed 语义重复，只留一个')
 
 // 被展开的条目正文必须完整（不允许半条）
 const keptCount = state.injection.kept
@@ -182,7 +183,7 @@ async function call2(payload) {
 const wide = await call2({ op: 'state', sessionId })
 expect('预算放宽后不再索引', wide.injection.indexMode, (v) => v === false, '预算足够应全量展开')
 expect('预算放宽后 kept = total', wide.injection.kept, (v) => v === wide.injection.total, '全部展开')
-expect('预算放宽后未压缩', wide.injection.compressed, (v) => v === false, '没超过压缩线就不该压缩')
+expect('预算放宽后不再压缩', wide.injection.indexMode, (v) => v === false, '没超过压缩线就不该把条目降级')
 expect('放宽后压缩线同步放大', wide.injection.softLimit, (v) => v === 80000, '100000 × 0.8')
 
 // 阈值可调：换成 50% 后压缩线应跟着变

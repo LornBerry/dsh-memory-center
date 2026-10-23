@@ -16,7 +16,7 @@ import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { canWriteDir, candidateDataDirs, pickDataDir } from './lib/paths.js'
-import { SYNONYM_GROUPS, searchItems } from './lib/retrieval.js'
+import { SYNONYM_GROUPS, buildIndex, searchItems } from './lib/retrieval.js'
 import { hasGit, mergeStates, normalizeSync, syncNow as runSync } from './lib/sync.js'
 
 export const name = 'memory-center'
@@ -50,10 +50,37 @@ function applyCompressRatio(ratio) {
 }
 
 /**
+ * 回收站保留天数：超过这个天数的软删除条目在下次加载时自动彻底删除（并写墓碑）。
+ * 设 DSH_MEMORY_RECYCLE_DAYS=0 表示永不自动清理。范围 0–3650，默认 30 天。
+ */
+function parseRecycleDays(raw) {
+  if (raw === undefined || raw === null || raw === '') return 30
+  const value = Number(raw)
+  if (!Number.isFinite(value)) return 30
+  return Math.min(3650, Math.max(0, Math.round(value)))
+}
+
+const RECYCLE_KEEP_DAYS = parseRecycleDays(process.env.DSH_MEMORY_RECYCLE_DAYS)
+
+/**
  * 检索用的同义组：内置一组中文常见说法，用户可在 config.json 的 synonyms 里追加自己的说法
  * （每条是字符串数组），检索时按 0.5 权重扩展召回。
  */
 let SYNONYMS = SYNONYM_GROUPS
+
+/**
+ * 检索索引缓存：条目上千时每次搜索重建倒排索引会掉帧（面板搜索框是逐键触发）。
+ * 键 = 库最后写入时间 + 候选池规模 + 池首尾 id，任一变化就重建。
+ */
+let searchCache = { key: '', index: null }
+
+function searchWithCache(pool, query, limit, tag = '') {
+  const key = `${tag}|${store && store.updatedAt}|${pool.length}|${pool[0] && pool[0].id}|${pool[pool.length - 1] && pool[pool.length - 1].id}`
+  if (searchCache.key !== key || !searchCache.index || searchCache.index.size !== pool.length) {
+    searchCache = { key, index: buildIndex(pool) }
+  }
+  return searchItems(pool, query, { limit, synonyms: SYNONYMS, index: searchCache.index })
+}
 
 function mergeSynonyms(custom) {
   const groups = SYNONYM_GROUPS.map((group) => [...group])
@@ -235,6 +262,36 @@ function normalizeTags(value) {
   return out
 }
 
+/**
+ * 条目字段表：写入侧（各种 op）能落到条目上的每个字段都必须在这里登记，
+ * 否则重新加载（重启 / 切目录 / 同步拉取）时会被 normalizeState 丢掉。
+ * 新增字段只改这一处；dev/fields.test.mjs 会对照 index.js 里所有条目字段赋值检查遗漏。
+ */
+export const ITEM_FIELDS = {
+  title: (value) => String(value ?? '').trim() || '未命名记忆',
+  body: (value) => String(value ?? ''),
+  tags: (value) => normalizeTags(value),
+  groupId: (value) => (typeof value === 'string' ? value : null),
+  enabled: (value) => value !== false,
+  pinned: (value) => value === true,
+  status: (value) => (value === 'pending' ? 'pending' : 'active'),
+  source: (value) => (['manual', 'auto', 'import', 'merge'].includes(value) ? value : 'manual'),
+  sessionId: (value) => (typeof value === 'string' && value ? value : null),
+  anchorMode: (value) => (['full', 'weight'].includes(value) ? value : 'off'),
+  order: (value, index) => (Number.isFinite(value) ? Number(value) : index),
+  createdAt: (value) => (typeof value === 'string' ? value : nowIso()),
+  updatedAt: (value) => (typeof value === 'string' ? value : nowIso()),
+  deletedAt: (value) => (typeof value === 'string' ? value : null),
+  archivedAt: (value) => (typeof value === 'string' ? value : null),
+  mergedInto: (value) => (typeof value === 'string' ? value : null),
+}
+
+function normalizeItem(item, index) {
+  const out = { id: item.id }
+  for (const [field, coerce] of Object.entries(ITEM_FIELDS)) out[field] = coerce(item[field], index)
+  return out
+}
+
 function normalizeState(raw) {
   const source = raw && typeof raw === 'object' ? raw : {}
   const state = emptyState()
@@ -259,22 +316,7 @@ function normalizeState(raw) {
   if (Array.isArray(source.items)) {
     for (const item of source.items) {
       if (!item || typeof item.id !== 'string') continue
-      state.items.push({
-        id: item.id,
-        title: String(item.title ?? '').trim() || '未命名记忆',
-        body: String(item.body ?? ''),
-        tags: normalizeTags(item.tags),
-        groupId: typeof item.groupId === 'string' ? item.groupId : null,
-        enabled: item.enabled !== false,
-        pinned: item.pinned === true,
-        status: item.status === 'pending' ? 'pending' : 'active',
-        source: ['manual', 'auto', 'import'].includes(item.source) ? item.source : 'manual',
-        sessionId: typeof item.sessionId === 'string' && item.sessionId ? item.sessionId : null,
-        anchorMode: ['full', 'weight'].includes(item.anchorMode) ? item.anchorMode : 'off',
-        order: Number.isFinite(item.order) ? Number(item.order) : state.items.length,
-        createdAt: typeof item.createdAt === 'string' ? item.createdAt : nowIso(),
-        updatedAt: typeof item.updatedAt === 'string' ? item.updatedAt : nowIso(),
-      })
+      state.items.push(normalizeItem(item, state.items.length))
     }
   }
   return state
@@ -377,6 +419,11 @@ async function ensureLoaded() {
       store = normalizeState(await readStoreFile(STORE_FILE))
       sessions = normalizeSessions(await readJson(SESSIONS_FILE, {}))
       pruneSessions(sessions)
+      // 回收站到期清理：软删除太久的条目在这里彻底删掉，顺便写墓碑防止同步复活。
+      if (purgeExpiredDeleted(store).length) {
+        await persist()
+        await persistSessions()
+      }
       if (!store.groups.length && !store.items.length) {
         store = seedState()
         await persist()
@@ -576,6 +623,29 @@ function renderItemLines(item) {
   return lines
 }
 
+/** 一条记忆注入时的字符成本（渲染后的真实长度，含换行）。容量画像与预算共用这一处口径。 */
+function costOf(item) {
+  return renderItemLines(item).join('\n').length + 1
+}
+
+/** 注入头部：统计行要等装完才知道，所以先给一个「零值」版本用于估算预算。 */
+function headerLines(summary) {
+  return [
+    '## 用户长期记忆（来自「记忆」面板，由用户维护）',
+    '',
+    summary,
+    '',
+    '锚点：标「〔完全锚点〕」的条目必须完全照此执行/表达，不得偏离；标「〔权重锚点〕」的条目只作为输出倾向的权重，影响措辞与优先级，可偏离。',
+    '',
+  ]
+}
+
+function summaryLine(stats) {
+  return `本次加载 ${stats.kept} 条 / ${stats.folders} 个文件夹${
+    stats.dropped ? `（另有 ${stats.dropped} 条只给了标题，需要时用 memory_search 取全文）` : ''
+  }。记忆可能过时，与代码或工具输出冲突时以实际观察为准，并提示用户更新记忆。`
+}
+
 /**
  * 把「本次会话要带的记忆」组装成一段上下文。
  *
@@ -597,7 +667,7 @@ function composeInjection(state, sessionId) {
       softLimit: SOFT_INJECT_CHARS,
       ratio: COMPRESS_RATIO,
       totalChars: 0,
-      compressed: false,
+      over: false,
       indexMode: false,
       anchors: 0,
     },
@@ -622,22 +692,15 @@ function composeInjection(state, sessionId) {
     return ga - gb || (a.order ?? 0) - (b.order ?? 0)
   })
 
-  const head = [
-    '## 用户长期记忆（来自「记忆」面板，由用户维护）',
-    '',
-    '',
-    '',
-    '锚点：标「〔完全锚点〕」的条目必须完全照此执行/表达，不得偏离；标「〔权重锚点〕」的条目只作为输出倾向的权重，影响措辞与优先级，可偏离。',
-    '',
-  ]
+  const head = headerLines(summaryLine({ kept: 0, folders: 0, dropped: 0 }))
   // 给统计行、索引清单、省略提示留出的余量
   const RESERVE = 320
   // 压缩阈值就是这里的预算：超过 softLimit（默认 80%）就只给标题，不等撑满 100%。
   let budget = SOFT_INJECT_CHARS - head.join('\n').length - RESERVE
-  const totalChars = priority.reduce((sum, item) => sum + renderItemLines(item).join('\n').length + 1, 0)
+  const totalChars = priority.reduce((sum, item) => sum + costOf(item), 0)
   const kept = new Set()
   for (const item of priority) {
-    const cost = renderItemLines(item).join('\n').length + 1
+    const cost = costOf(item)
     if (cost > budget) continue
     kept.add(item.id)
     budget -= cost
@@ -654,18 +717,8 @@ function composeInjection(state, sessionId) {
   const anchors = keptItems.filter((item) => item.anchorMode === 'full' || item.anchorMode === 'weight').length
 
   const blocks = []
-  blocks.push('## 用户长期记忆（来自「记忆」面板，由用户维护）')
-  blocks.push('')
-  blocks.push(
-    `本次加载 ${keptItems.length} 条 / ${groups.size} 个文件夹${
-      dropped.length ? `（另有 ${dropped.length} 条只给了标题，需要时用 memory_search 取全文）` : ''
-    }。记忆可能过时，与代码或工具输出冲突时以实际观察为准，并提示用户更新记忆。`,
-  )
-  blocks.push('')
-  blocks.push(
-    '锚点：标「〔完全锚点〕」的条目必须完全照此执行/表达，不得偏离；标「〔权重锚点〕」的条目只作为输出倾向的权重，影响措辞与优先级，可偏离。',
-  )
-  blocks.push('')
+  // 头部只生成这一遍：统计行用真实的 kept/folders/dropped，不再先算一遍占位再重拼一次
+  blocks.push(...headerLines(summaryLine({ kept: keptItems.length, folders: groups.size, dropped: dropped.length })))
   for (const [groupId, groupItems] of groups) {
     blocks.push(`### ${groupId ? groupNameOf(state, groupId) : '未归类'}`)
     for (const item of groupItems) blocks.push(...renderItemLines(item))
@@ -700,7 +753,7 @@ function composeInjection(state, sessionId) {
       ratio: COMPRESS_RATIO,
       totalChars,
       over: totalChars > SOFT_INJECT_CHARS,
-      compressed: dropped.length > 0,
+      // indexMode：本次有条目被降级成「只有标题」的索引清单
       indexMode: dropped.length > 0,
       anchors,
     },
@@ -757,7 +810,8 @@ function archiveView(state) {
 
 /** 容量画像：注入预算用了多少、文件夹各占多少、最长的几条是谁。 */
 function capacityOf(state) {
-  const charsOf = (item) => item.title.length + String(item.body ?? '').length
+  // 与 composeInjection 共用 costOf：面板显示的占比必须就是注入时真正计入的字符数
+  const charsOf = costOf
   const live = state.items.filter(
     (item) => !item.deletedAt && !item.archivedAt && item.status === 'active' && item.enabled,
   )
@@ -828,6 +882,11 @@ function snapshot(state, sessionId, extra) {
     groups: sortGroups(state.groups),
     items: sortItems(items),
     deleted: recycleView(state),
+    recycle: {
+      keepDays: RECYCLE_KEEP_DAYS,
+      autoPurge: RECYCLE_KEEP_DAYS > 0,
+      count: recycledItems(state).length,
+    },
     archived: archiveView(state),
     capacity: capacityOf(state),
     tags: allTags(state),
@@ -901,6 +960,25 @@ function uniqueGroupName(state, name, exceptId) {
   return trimmed
 }
 
+/**
+ * 回收站的到期清理：软删除超过 keepDays 天的条目在加载时彻底删除（并写墓碑）。
+ * 返回被清掉的 id 列表，调用方负责 persist；keepDays<=0 时只清 0 天（即不自动清）。
+ */
+function purgeExpiredDeleted(state, keepDays = RECYCLE_KEEP_DAYS) {
+  if (!(keepDays > 0)) return []
+  const cutoff = Date.now() - keepDays * 86400000
+  const expired = state.items.filter((item) => item.deletedAt && Date.parse(item.deletedAt) < cutoff)
+  if (!expired.length) return []
+  const ids = expired.map((item) => item.id)
+  markDeleted(state, ids)
+  const dead = new Set(ids)
+  state.items = state.items.filter((item) => !dead.has(item.id))
+  for (const selection of Object.values(sessions)) {
+    if (!Array.isArray(selection.itemIds)) continue
+    selection.itemIds = selection.itemIds.filter((id) => !dead.has(id))
+  }
+  return ids
+}
 function dedupeKey(item) {
   return `${String(item.title ?? '').trim()}||${String(item.body ?? '').trim()}`
 }
@@ -1265,6 +1343,12 @@ async function runOp(op, payload) {
     case 'item.batch': {
       const ids = Array.isArray(payload.ids) ? payload.ids.filter((id) => typeof id === 'string') : []
       const patch = payload.patch && typeof payload.patch === 'object' ? payload.patch : {}
+      // 只支持“可以安全地同时套到多条”的字段；标题/正文/锚点说明必须单条编辑，别让批量改正文成为事故入口。
+      const supported = ['enabled', 'pinned', 'status', 'groupId', 'anchorMode', 'tags', 'addTags', 'removeTags']
+      const unknown = Object.keys(patch).filter((key) => !supported.includes(key))
+      if (unknown.length) {
+        throw fail(`批量修改不支持这些字段：${unknown.join('、')}（标题、正文、锚点说明请单条编辑）`)
+      }
       let changed = 0
       for (const id of ids) {
         const item = state.items.find((entry) => entry.id === id && !entry.deletedAt)
@@ -1274,6 +1358,8 @@ async function runOp(op, payload) {
         if ('status' in patch) item.status = patch.status === 'pending' ? 'pending' : 'active'
         if ('groupId' in patch) item.groupId = resolveGroupId(state, patch.groupId)
         if ('anchorMode' in patch) item.anchorMode = ['full', 'weight'].includes(patch.anchorMode) ? patch.anchorMode : 'off'
+        // tags = 整组替换；addTags / removeTags = 在原有标签上增删，默认用后者以免误删分类。
+        if (Array.isArray(patch.tags)) item.tags = normalizeTags(patch.tags)
         // 批量打标：把标签并到每条已有标签上，不覆盖用户原来的分类。
         if (Array.isArray(patch.addTags)) {
           const merged = new Set(item.tags)
@@ -1630,7 +1716,7 @@ async function runOp(op, payload) {
       const pool = state.items
         .filter((item) => !item.deletedAt && item.status === 'active' && item.enabled)
         .filter((item) => includeArchived || !item.archivedAt)
-      const hits = searchItems(pool, query, { limit: 50, synonyms: SYNONYMS })
+      const hits = searchWithCache(pool, query, 50)
       return {
         ok: true,
         query,
@@ -1768,7 +1854,7 @@ function registerTools(ctx) {
       const archivedCount = base.filter((item) => item.archivedAt).length
       const hits = (
         query
-          ? searchItems(pool, query, { limit, synonyms: SYNONYMS })
+          ? searchWithCache(pool, query, limit)
           : pool.slice(0, limit).map((item) => ({ item, score: 0, snippet: '' }))
       )
       const archivedNote =

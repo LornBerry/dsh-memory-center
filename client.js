@@ -66,6 +66,8 @@ window.__ModuleLoader__.load({
 .dmc-btn-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
         .dmc-cap-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .dmc-cap-num { flex: none; opacity: .62; font-variant-numeric: tabular-nums; }
+        .dmc-cap-row .dmc-btn-mini { flex: none; padding: 2px 8px; font-size: 12px; }
+        .dmc-btn-mini { padding: 2px 8px; font-size: 12px; }
         .dmc-row { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
         .dmc-row:hover { background: rgba(127,127,127,.12); }
         .dmc-row.is-active { background: rgba(90,140,255,.16); }
@@ -485,7 +487,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function CapacityDialog({ capacity, injection, onClose, onArchiveFolder, onSetRatio }) {
+    function CapacityDialog({ capacity, injection, onClose, onArchiveFolder, onSetRatio, onFocusItem, onArchiveIds }) {
       const cap = capacity || {}
       const folders = (cap.folders || []).slice().sort((a, b) => b.chars - a.chars)
       const longest = cap.longest || []
@@ -583,6 +585,28 @@ window.__ModuleLoader__.load({
                 { key: `l${index}`, className: 'dmc-cap-row' },
                 h('span', { className: 'dmc-cap-name' }, item.title),
                 h('span', { className: 'dmc-cap-num' }, formatK(item.chars)),
+                onFocusItem
+                  ? h(
+                      'button',
+                      {
+                        className: 'dmc-btn dmc-btn-mini',
+                        title: '在面板里定位这条记忆',
+                        onClick: () => onFocusItem(item.id),
+                      },
+                      '定位',
+                    )
+                  : null,
+                onArchiveIds
+                  ? h(
+                      'button',
+                      {
+                        className: 'dmc-btn dmc-btn-mini',
+                        title: '归档这条（不再注入，可在「归档」里还原）',
+                        onClick: () => onArchiveIds([item.id]),
+                      },
+                      '归档',
+                    )
+                  : null,
               ),
             )
           : [h('div', { key: 'nolong', className: 'dmc-card-hint' }, '—')]),
@@ -2077,7 +2101,7 @@ window.__ModuleLoader__.load({
                     'div',
                     { className: 'dmc-budget-bar' },
                     h('i', {
-                      className: data.injection.compressed ? 'is-over' : null,
+                      className: data.injection.indexMode ? 'is-over' : null,
                       style: {
                         width: `${Math.min(100, Math.round((data.injection.chars / Math.max(1, data.injection.softLimit)) * 100))}%`,
                       },
@@ -2087,7 +2111,7 @@ window.__ModuleLoader__.load({
                     'div',
                     { className: 'dmc-budget-text' },
                     `${formatK(data.injection.chars)} / 压缩线 ${formatK(data.injection.softLimit)}`,
-                    data.injection.compressed
+                    data.injection.indexMode
                       ? ` · ${data.injection.dropped} 条只给标题（已压缩）`
                       : data.injection.over
                         ? ' · 已超过压缩线，下一条起压缩'
@@ -2238,6 +2262,13 @@ window.__ModuleLoader__.load({
                 'div',
                 { className: 'dmc-bottom-bar' },
                 h('strong', null, `回收站 ${deletedItems.length} 条`),
+                h(
+                  'span',
+                  { className: 'dmc-card-hint' },
+                  data.recycle && data.recycle.autoPurge
+                    ? `保留 ${data.recycle.keepDays} 天，过期自动彻底删除`
+                    : '不会自动清理，需要手动清空',
+                ),
                 h(
                   'button',
                   {
@@ -2464,6 +2495,17 @@ window.__ModuleLoader__.load({
               onArchiveFolder: () => {
                 setCapacityOpen(false)
                 setFilter('__archived')
+              },
+              onFocusItem: (id) => {
+                const target = (data.items || []).find((item) => item.id === id)
+                if (!target) return
+                setCapacityOpen(false)
+                setFilter(target.groupId || '__ungrouped')
+                setSelected([id])
+              },
+              onArchiveIds: async (ids) => {
+                setCapacityOpen(false)
+                await run('item.archive', { ids })
               },
             })
           : null,
