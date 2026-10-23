@@ -1,6 +1,6 @@
 {
   "name": "dsh-memory-center",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "private": true,
   "description": "用户可查看、编辑、分组、导入导出、逐会话决定是否加载、并可自行选择同步到 Git/WebDAV 的本地长期记忆库（DSH 插件）",
   "type": "module",
