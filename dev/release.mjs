@@ -64,6 +64,7 @@ if (!skipTests) {
     'dev/memory-write.test.mjs',
     'dev/resilience.test.mjs',
     'dev/recycle.test.mjs',
+    'dev/budget.test.mjs',
   ]
   for (const test of tests) {
     if (existsSync(path.join(ROOT, test))) run(process.execPath, [test])

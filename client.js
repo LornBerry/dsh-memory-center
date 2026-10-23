@@ -53,6 +53,15 @@ window.__ModuleLoader__.load({
         .dmc-title { font-weight: 600; font-size: 14px; }
         .dmc-nav-list { overflow: auto; padding: 4px 8px 12px; flex: 1 1 auto; min-height: 0; }
         .dmc-nav-foot { padding: 8px 12px; border-top: 1px solid rgba(127,127,127,.18); font-size: 11px; opacity: .62; line-height: 1.5; word-break: break-all; }
+        .dmc-budget { margin-top: 6px; opacity: 1; }
+        .dmc-budget-bar { height: 4px; border-radius: 3px; background: rgba(127,127,127,.22); overflow: hidden; }
+        .dmc-budget-bar > i { display: block; height: 100%; background: #2ea078; border-radius: 3px; transition: width .2s ease; }
+.dmc-budget-bar > i.is-over { background: #d98324; }
+        .dmc-budget-text { margin-top: 3px; letter-spacing: .2px; }
+        .dmc-cap { font-size: 13px; }
+        .dmc-cap-row { display: flex; align-items: baseline; gap: 10px; padding: 3px 0; border-bottom: 1px dashed rgba(127,127,127,.16); }
+        .dmc-cap-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .dmc-cap-num { flex: none; opacity: .62; font-variant-numeric: tabular-nums; }
         .dmc-row { display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 8px; cursor: pointer; }
         .dmc-row:hover { background: rgba(127,127,127,.12); }
         .dmc-row.is-active { background: rgba(90,140,255,.16); }
@@ -209,6 +218,12 @@ window.__ModuleLoader__.load({
       }
       if (!data || data.ok === false) throw new Error((data && data.error) || `请求失败（HTTP ${response.status}）`)
       return data
+    }
+
+    /** 12345 → 12.3k，用于注入预算这种小数字。 */
+    function formatK(value) {
+      const n = Number(value) || 0
+      return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n)
     }
 
     const store = {
@@ -463,6 +478,83 @@ window.__ModuleLoader__.load({
         },
         h('div', { style: { fontSize: '13px', lineHeight: '1.7' } }, message),
         detail ? h('div', { className: 'dmc-card-hint', style: { marginTop: '8px' } }, detail) : null,
+      )
+    }
+
+    function CapacityDialog({ capacity, injection, onClose, onArchiveFolder }) {
+      const cap = capacity || {}
+      const folders = (cap.folders || []).slice().sort((a, b) => b.chars - a.chars)
+      const longest = cap.longest || []
+      const softLimit = cap.softLimit || Math.floor((cap.limit || 0) * (cap.threshold || 0.8))
+      const ratio = Math.min(100, Math.round((cap.ratio || 0) * 100))
+      const thresholdPct = Math.round((cap.threshold || 0.8) * 100)
+      const rows = [
+        h(
+          'div',
+          { key: 'head', className: 'dmc-card-hint', style: { marginBottom: '8px' } },
+          `注入上限 ${formatK(cap.limit || 0)} 字符，压缩线 ${formatK(softLimit)}（上限的 ${thresholdPct}%）。当前本会话要注入 ${injection ? injection.kept : 0} 条、${formatK(injection ? injection.chars : 0)} 字符。`,
+        ),
+        h(
+          'div',
+          { key: 'bar', className: 'dmc-budget-bar', style: { marginBottom: '4px' } },
+          h('i', {
+            style: {
+              width: `${ratio}%`,
+              background: ratio >= 100 ? '#d9534f' : cap.over ? '#d98324' : '#2ea078',
+            },
+          }),
+        ),
+        h(
+          'div',
+          { key: 'ratio', className: 'dmc-card-hint', style: { marginBottom: '10px' } },
+          `全部启用记忆共 ${formatK(cap.chars || 0)} 字符（${cap.items || 0} 条），是压缩线的 ${ratio}%。`,
+          cap.over ? ' 已超过压缩线：超出部分只给标题，需要在提问里用到就用 memory_search 取。' : '',
+        ),
+        h('div', { key: 'h1', style: { fontWeight: 600, margin: '6px 0' } }, '哪几个文件夹最占地方'),
+        ...(folders.length
+          ? folders.slice(0, 8).map((group, index) =>
+              h(
+                'div',
+                { key: `f${index}`, className: 'dmc-cap-row' },
+                h('span', { className: 'dmc-cap-name' }, group.name),
+                h('span', { className: 'dmc-cap-num' }, `${group.count} 条 · ${formatK(group.chars)}`),
+              ),
+            )
+          : [h('div', { key: 'nofolder', className: 'dmc-card-hint' }, '还没有记忆')]),
+        h('div', { key: 'h2', style: { fontWeight: 600, margin: '12px 0 6px' } }, '最长的几条'),
+        ...(longest.length
+          ? longest.map((item, index) =>
+              h(
+                'div',
+                { key: `l${index}`, className: 'dmc-cap-row' },
+                h('span', { className: 'dmc-cap-name' }, item.title),
+                h('span', { className: 'dmc-cap-num' }, formatK(item.chars)),
+              ),
+            )
+          : [h('div', { key: 'nolong', className: 'dmc-card-hint' }, '—')]),
+        h(
+          'div',
+          { key: 'tip', className: 'dmc-card-hint', style: { marginTop: '12px' } },
+          '建议：把过时的条目「归档」，或选中几条意义相近的点「合并」压成一条；被挤掉的条目不会丢，模型会用 memory_search 去查。',
+        ),
+      ]
+      return h(
+        Modal,
+        {
+          title: '记忆容量',
+          onClose,
+          footer: [
+            onArchiveFolder
+              ? h(
+                  'button',
+                  { key: 'arch', className: 'dmc-btn', onClick: onArchiveFolder },
+                  '去归档',
+                )
+              : null,
+            h('button', { key: 'ok', className: 'dmc-btn primary', onClick: onClose }, '知道了'),
+          ].filter(Boolean),
+        },
+        h('div', { className: 'dmc-cap' }, rows),
       )
     }
 
@@ -1362,6 +1454,7 @@ window.__ModuleLoader__.load({
       const [view, setView] = useState((props && props.debugView) || 'card')
       const [confirmAsk, setConfirmAsk] = useState((props && props.debugConfirm) || null)
       const [tagging, setTagging] = useState(null)
+      const [capacityOpen, setCapacityOpen] = useState((props && props.debugCapacity) || false)
 
       useEffect(() => {
         refresh(activeSessionId)
@@ -1377,11 +1470,13 @@ window.__ModuleLoader__.load({
 
       const pendingCount = data.stats.pending
       const deletedItems = data.deleted || []
+      const archivedItems = data.archived || []
       const recycleMode = filter === '__deleted'
-      const pool = recycleMode ? deletedItems : data.items
+      const archiveMode = filter === '__archived'
+      const pool = recycleMode ? deletedItems : archiveMode ? archivedItems : data.items
       const filtered = pool.filter((item) => {
-        if (recycleMode) {
-          // 回收站里只按关键词过滤，不再套文件夹/待确认条件。
+        if (recycleMode || archiveMode) {
+          // 回收站 / 归档只按关键词过滤，不再套文件夹/待确认条件。
         } else {
           if (filter === '__pending' && item.status !== 'pending') return false
           if (filter === '__ungrouped' && item.groupId) return false
@@ -1425,7 +1520,9 @@ window.__ModuleLoader__.load({
               ? '未归类'
               : filter === '__deleted'
                 ? '回收站'
-                : (data.groups.find((group) => group.id === filter) || {}).name || '全部记忆'
+                : filter === '__archived'
+                  ? '归档'
+                  : (data.groups.find((group) => group.id === filter) || {}).name || '全部记忆'
 
       const toggleSelect = (id) =>
         setSelected((prev) => (prev.includes(id) ? prev.filter((entry) => entry !== id) : [...prev, id]))
@@ -1499,7 +1596,13 @@ window.__ModuleLoader__.load({
           return { left: Math.max(8, Math.min(x, vw - width - 8)), top: Math.max(8, Math.min(y, vh - height - 8)) }
         }
         const spot = at(menu.x, menu.y)
-        const item = menu.kind === 'item' ? data.items.find((entry) => entry.id === menu.id) : null
+        const item =
+          menu.kind === 'item'
+            ? (data.items || []).find((entry) => entry.id === menu.id) ||
+              (data.archived || []).find((entry) => entry.id === menu.id) ||
+              (data.deleted || []).find((entry) => entry.id === menu.id) ||
+              null
+            : null
         const group = menu.kind === 'folder' ? data.groups.find((entry) => entry.id === menu.id) : null
         if (!item && !group) return null
         const act = async (fn) => {
@@ -1541,6 +1644,9 @@ window.__ModuleLoader__.load({
                 row(item.pinned ? '取消置顶' : '置顶', () => run('item.update', { id: item.id, patch: { pinned: !item.pinned } })),
                 row(item.enabled ? '停用（不再注入）' : '启用', () => run('item.update', { id: item.id, patch: { enabled: !item.enabled } })),
                 row('复制一份', () => run('item.duplicate', { id: item.id })),
+                item.archivedAt
+                  ? row('还原（回到活跃）', () => run('item.unarchive', { ids: [item.id] }))
+                  : row('归档（不再注入，可还原）', () => run('item.archive', { ids: [item.id] })),
                 item.status === 'pending' ? row('转正', () => run('item.confirm', { ids: [item.id] })) : null,
                 activeSessionId ? row('加入本会话', () => run('session.add', { sessionId: activeSessionId, itemIds: [item.id] })) : null,
                 h('div', { key: 'move-head', className: 'dmc-menu-head' }, '存放到文件夹'),
@@ -1563,6 +1669,25 @@ window.__ModuleLoader__.load({
                     onClick: () => act(() => run('item.move', { ids: [item.id], groupId: null })),
                   },
                   `${item.groupId ? '' : '✓ '}未归类`,
+                ),
+                h('div', { key: 'sep-anchor', className: 'dmc-menu-sep' }),
+                h('div', { key: 'anchor-head', className: 'dmc-menu-head' }, '锚点（决定注入强度）'),
+                ...[
+                  ['full', '完全锚点：必须照此执行', '硬性要求，模型不得偏离'],
+                  ['weight', '权重锚点：倾向性参考', '软性偏好，影响措辞与优先级，可偏离'],
+                  ['off', '不启用锚点', '普通记忆，只作为事实参考'],
+                ].map(([mode, label, hint]) =>
+                  h(
+                    'button',
+                    {
+                      key: `anchor-${mode}`,
+                      className: 'dmc-menu-item',
+                      title: hint,
+                      onClick: () =>
+                        act(() => run('item.update', { id: item.id, patch: { anchorMode: mode } })),
+                    },
+                    `${(item.anchorMode || 'off') === mode ? '✓ ' : ''}${label}`,
+                  ),
                 ),
                 h('div', { key: 'sep', className: 'dmc-menu-sep' }),
                 row(
@@ -1718,6 +1843,19 @@ window.__ModuleLoader__.load({
             h('div', { className: 'dmc-empty-hint' }, '删除记忆时它会先来这里待着，随时可以恢复。'),
           )
         }
+        if (archiveMode) {
+          return h(
+            'div',
+            { className: 'dmc-empty-state' },
+            h('div', { className: 'dmc-empty-art' }, '🗄'),
+            h('div', { className: 'dmc-empty-title' }, '归档里还没有记忆'),
+            h(
+              'div',
+              { className: 'dmc-empty-hint' },
+              '把长期不用、又舍不得删的记忆「归档」，它就不再占用注入额度，随时可以还原。',
+            ),
+          )
+        }
         if (filter === '__pending') {
           return h(
             'div',
@@ -1766,6 +1904,7 @@ window.__ModuleLoader__.load({
             navRow('__pending', '待确认', pendingCount),
             navRow('__ungrouped', '未归类', data.items.filter((item) => !item.groupId && item.status === 'active').length, null),
             navRow('__deleted', '回收站', data.stats.deleted || 0, undefined),
+            navRow('__archived', '归档', data.stats.archived || 0, undefined),
             h('div', { className: 'dmc-nav-head' }, h('span', { className: 'dmc-card-hint' }, '文件夹')),
             ...data.groups.map((group) =>
               h(
@@ -1812,6 +1951,39 @@ window.__ModuleLoader__.load({
             'div',
             { className: 'dmc-nav-foot' },
             h('div', null, `共 ${data.stats.items} 条 · 参与注入 ${data.stats.enabled} 条 · 待确认 ${pendingCount} 条`),
+            data.injection
+              ? h(
+                  'div',
+                  {
+                    className: 'dmc-budget',
+                    role: 'button',
+                    tabIndex: 0,
+                    style: { cursor: 'pointer' },
+                    title: `本次会话注入 ${data.injection.kept} 条，占 ${data.injection.chars} / ${data.injection.softLimit} 字符（压缩线是上限的 ${Math.round((data.injection.ratio || 0.8) * 100)}%）；点开看容量画像`,
+                    onClick: () => setCapacityOpen(true),
+                  },
+                  h(
+                    'div',
+                    { className: 'dmc-budget-bar' },
+                    h('i', {
+                      className: data.injection.compressed ? 'is-over' : null,
+                      style: {
+                        width: `${Math.min(100, Math.round((data.injection.chars / Math.max(1, data.injection.softLimit)) * 100))}%`,
+                      },
+                    }),
+                  ),
+                  h(
+                    'div',
+                    { className: 'dmc-budget-text' },
+                    `${formatK(data.injection.chars)} / 压缩线 ${formatK(data.injection.softLimit)}`,
+                    data.injection.compressed
+                      ? ` · ${data.injection.dropped} 条只给标题（已压缩）`
+                      : data.injection.over
+                        ? ' · 已超过压缩线，下一条起压缩'
+                        : '',
+                  ),
+                )
+              : null,
           ),
         ),
         h(
@@ -2016,6 +2188,30 @@ window.__ModuleLoader__.load({
                 ),
                 h('button', { className: 'dmc-btn', onClick: clearSelect }, '取消选择'),
               )
+            : archiveMode && archivedItems.length
+              ? h(
+                  'div',
+                  { className: 'dmc-bottom-bar' },
+                  h('strong', null, `归档 ${archivedItems.length} 条`),
+                  h(
+                    'button',
+                    {
+                      className: 'dmc-btn',
+                      disabled: !selected.length,
+                      onClick: async () => {
+                        await run('item.unarchive', { ids: selected })
+                        clearSelect()
+                      },
+                    },
+                    `还原选中${selected.length ? `（${selected.length}）` : ''}`,
+                  ),
+                  h('button', { className: 'dmc-btn', onClick: clearSelect }, '取消选择'),
+                  h(
+                    'span',
+                    { className: 'dmc-card-hint' },
+                    '归档的记忆不参与注入，也不会出现在 memory_search 结果里。',
+                  ),
+                )
             : selected.length
               ? h(
                   'div',
@@ -2041,6 +2237,45 @@ window.__ModuleLoader__.load({
                   h('button', { className: 'dmc-btn', onClick: () => batchPatch(selected, { enabled: false }) }, '停用'),
                   h('button', { className: 'dmc-btn', onClick: () => batchPatch(selected, { enabled: true }) }, '启用'),
                   h('button', { className: 'dmc-btn', onClick: () => batchPatch(selected, { pinned: true }) }, '置顶'),
+                  h(
+                    'button',
+                    {
+                      className: 'dmc-btn',
+                      onClick: () =>
+                        setConfirmAsk({
+                          title: `归档选中的 ${selected.length} 条？`,
+                          message: '归档后它们不再占用注入额度，也不会出现在 memory_search 里，但内容完整保留。',
+                          detail: '在左侧「归档」里可以随时还原。',
+                          confirmLabel: '归档',
+                          onConfirm: async () => {
+                            await run('item.archive', { ids: selected })
+                            clearSelect()
+                          },
+                        }),
+                    },
+                    '归档',
+                  ),
+                  selected.length >= 2
+                    ? h(
+                        'button',
+                        {
+                          className: 'dmc-btn',
+                          onClick: () =>
+                            setConfirmAsk({
+                              title: `把选中的 ${selected.length} 条合并成一条？`,
+                              message:
+                                '会生成一条新的「精炼记忆」，正文按时间顺序拼接各条内容，标签取并集，原条目移入归档层可回溯。',
+                              detail: '合并后可以继续编辑新条目的正文，把它改得更短更准。',
+                              confirmLabel: '合并',
+                              onConfirm: async () => {
+                                await run('item.merge', { ids: selected })
+                                clearSelect()
+                              },
+                            }),
+                        },
+                        '合并',
+                      )
+                    : null,
                   selected.some((id) => (data.items.find((item) => item.id === id) || {}).status === 'pending')
                     ? h(
                         'button',
@@ -2116,6 +2351,17 @@ window.__ModuleLoader__.load({
           ),
         ),
         menu ? menuNode() : null,
+        capacityOpen
+          ? h(CapacityDialog, {
+              capacity: data.capacity,
+              injection: data.injection,
+              onClose: () => setCapacityOpen(false),
+              onArchiveFolder: () => {
+                setCapacityOpen(false)
+                setFilter('__archived')
+              },
+            })
+          : null,
         confirmAsk
           ? h(ConfirmDialog, {
               title: confirmAsk.title,

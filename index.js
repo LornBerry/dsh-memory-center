@@ -24,6 +24,18 @@ export const inject = ['webServer']
 const ROUTE_PREFIX = '/dsh-memory'
 const CONFIG_ENV = process.env.DSH_MEMORY_CONFIG || ''
 const MAX_INJECT_CHARS = Number(process.env.DSH_MEMORY_MAX_CHARS || 12000)
+
+/**
+ * 压缩阈值：记忆总量超过「上限 × 该比例」时，注入开始压缩（超出部分只给标题）。
+ * 默认 80%——留 20% 余量给统计行、索引清单和以后新增的记忆，避免一加就爆。
+ * 可用 DSH_MEMORY_COMPRESS_RATIO 调整（0.1–1，非法值回退 0.8）。
+ */
+const COMPRESS_RATIO = (() => {
+  const raw = Number(process.env.DSH_MEMORY_COMPRESS_RATIO)
+  if (!Number.isFinite(raw) || raw < 0.1 || raw > 1) return 0.8
+  return raw
+})()
+const SOFT_INJECT_CHARS = Math.max(1000, Math.floor(MAX_INJECT_CHARS * COMPRESS_RATIO))
 const PLUGIN_ID = 'dsh-memory-center'
 
 /**
@@ -501,7 +513,7 @@ function selectedItemIds(state, selection) {
   const itemIds = new Set(selection.itemIds ?? [])
   const chosen = []
   for (const item of state.items) {
-    if (item.deletedAt || item.status !== 'active' || !item.enabled) continue
+    if (item.deletedAt || item.archivedAt || item.status !== 'active' || !item.enabled) continue
     if (selection.mode === 'all') {
       chosen.push(item)
       continue
@@ -511,30 +523,105 @@ function selectedItemIds(state, selection) {
   return chosen
 }
 
-function buildInjection(state, sessionId) {
+function anchorRank(item) {
+  if (item.anchorMode === 'full') return 0
+  if (item.anchorMode === 'weight') return 1
+  return item.pinned ? 2 : 3
+}
+
+function renderItemLines(item) {
+  const tags = item.tags.length ? `  〔${item.tags.join(' / ')}〕` : ''
+  const anchor = item.anchorMode === 'full' ? '〔完全锚点〕' : item.anchorMode === 'weight' ? '〔权重锚点〕' : ''
+  const lines = [`- ${item.pinned ? '📌 ' : ''}${anchor}**${item.title}**${tags}`]
+  const body = String(item.body ?? '').trim()
+  if (body) for (const line of body.split('\n')) lines.push(line ? `  ${line}` : '')
+  return lines
+}
+
+/**
+ * 把「本次会话要带的记忆」组装成一段上下文。
+ *
+ * 条目一多，全量塞进去会挤掉对话本身，所以按预算装：
+ *   完全锚点 → 权重锚点 → 置顶 → 其余（越新越先）
+ * 装不下的条目不截半，直接退化成「索引」：只列标题，让模型需要时用 memory_search 取全文。
+ * 这样既不会把一条记忆切成两半，也不会让模型误以为记忆只有这么点。
+ */
+function composeInjection(state, sessionId) {
   const selection = sessions[sessionId]
-  if (!selection || selection.mode === 'none') return null
-  const items = sortItems(selectedItemIds(state, selection))
-  if (!items.length) return null
+  const empty = {
+    text: null,
+    stats: {
+      total: 0,
+      kept: 0,
+      dropped: 0,
+      chars: 0,
+      limit: MAX_INJECT_CHARS,
+      softLimit: SOFT_INJECT_CHARS,
+      ratio: COMPRESS_RATIO,
+      totalChars: 0,
+      compressed: false,
+      indexMode: false,
+      anchors: 0,
+    },
+  }
+  if (!selection || selection.mode === 'none') return empty
+  const selected = selectedItemIds(state, selection)
+  if (!selected.length) return empty
+
+  const priority = [...selected].sort((a, b) => {
+    const d = anchorRank(a) - anchorRank(b)
+    if (d) return d
+    const ua = String(a.updatedAt ?? '')
+    const ub = String(b.updatedAt ?? '')
+    if (ua !== ub) return ub.localeCompare(ua)
+    return (a.order ?? 0) - (b.order ?? 0)
+  })
+
   const groupOrder = new Map(sortGroups(state.groups).map((group, index) => [group.id, index]))
-  items.sort((a, b) => {
+  const ordered = [...selected].sort((a, b) => {
     const ga = a.groupId ? groupOrder.get(a.groupId) ?? 999 : 998
     const gb = b.groupId ? groupOrder.get(b.groupId) ?? 999 : 998
     return ga - gb || (a.order ?? 0) - (b.order ?? 0)
   })
 
+  const head = [
+    '## 用户长期记忆（来自「记忆」面板，由用户维护）',
+    '',
+    '',
+    '',
+    '锚点：标「〔完全锚点〕」的条目必须完全照此执行/表达，不得偏离；标「〔权重锚点〕」的条目只作为输出倾向的权重，影响措辞与优先级，可偏离。',
+    '',
+  ]
+  // 给统计行、索引清单、省略提示留出的余量
+  const RESERVE = 320
+  // 压缩阈值就是这里的预算：超过 softLimit（默认 80%）就只给标题，不等撑满 100%。
+  let budget = SOFT_INJECT_CHARS - head.join('\n').length - RESERVE
+  const totalChars = priority.reduce((sum, item) => sum + renderItemLines(item).join('\n').length + 1, 0)
+  const kept = new Set()
+  for (const item of priority) {
+    const cost = renderItemLines(item).join('\n').length + 1
+    if (cost > budget) continue
+    kept.add(item.id)
+    budget -= cost
+  }
+
+  const keptItems = ordered.filter((item) => kept.has(item.id))
+  const dropped = ordered.filter((item) => !kept.has(item.id))
   const groups = new Map()
-  for (const item of items) {
+  for (const item of keptItems) {
     const key = item.groupId ?? ''
     if (!groups.has(key)) groups.set(key, [])
     groups.get(key).push(item)
   }
+  const anchors = keptItems.filter((item) => item.anchorMode === 'full' || item.anchorMode === 'weight').length
 
   const blocks = []
   blocks.push('## 用户长期记忆（来自「记忆」面板，由用户维护）')
   blocks.push('')
   blocks.push(
-    `本次加载 ${items.length} 条 / ${groups.size} 个文件夹。记忆可能过时，与代码或工具输出冲突时以实际观察为准，并提示用户更新记忆。`,
+    `本次加载 ${keptItems.length} 条 / ${groups.size} 个文件夹${
+      dropped.length ? `（另有 ${dropped.length} 条只给了标题，需要时用 memory_search 取全文）` : ''
+    }。记忆可能过时，与代码或工具输出冲突时以实际观察为准，并提示用户更新记忆。`,
   )
   blocks.push('')
   blocks.push(
@@ -543,24 +630,47 @@ function buildInjection(state, sessionId) {
   blocks.push('')
   for (const [groupId, groupItems] of groups) {
     blocks.push(`### ${groupId ? groupNameOf(state, groupId) : '未归类'}`)
-    for (const item of groupItems) {
-      const tags = item.tags.length ? `  〔${item.tags.join(' / ')}〕` : ''
-      const anchor = item.anchorMode === 'full' ? '〔完全锚点〕' : item.anchorMode === 'weight' ? '〔权重锚点〕' : ''
-      blocks.push(`- ${item.pinned ? '📌 ' : ''}${anchor}**${item.title}**${tags}`)
-      const body = item.body.trim()
-      if (body) {
-        for (const line of body.split('\n')) blocks.push(line ? `  ${line}` : '')
-      }
-    }
+    for (const item of groupItems) blocks.push(...renderItemLines(item))
     blocks.push('')
   }
+
+  if (dropped.length) {
+    blocks.push('### 未展开的记忆（只有标题）')
+    const titles = dropped.slice(0, 40).map((item) => `- ${item.title}${item.tags.length ? `  〔${item.tags.join(' / ')}〕` : ''}`)
+    blocks.push(...titles)
+    if (dropped.length > titles.length) blocks.push(`- ……共 ${dropped.length} 条`)
+    blocks.push('')
+    blocks.push('需要上述任何一条的具体内容，调用 memory_search 检索，不要凭标题猜。')
+    blocks.push('')
+  }
+
   let text = blocks.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()
   if (text.length > MAX_INJECT_CHARS) {
-    // 按码点截断，别把 emoji / 代理对劈成半个字符。
+    // 兜底：索引清单本身也可能超长，按码点截断，别把 emoji / 代理对劈成半个字符。
     const runes = Array.from(text)
     text = `${runes.slice(0, MAX_INJECT_CHARS).join('')}\n\n（记忆内容过长，已截断，如需完整内容请在「记忆」面板查看）`
   }
-  return text
+  return {
+    text,
+    stats: {
+      total: selected.length,
+      kept: keptItems.length,
+      dropped: dropped.length,
+      chars: text.length,
+      limit: MAX_INJECT_CHARS,
+      softLimit: SOFT_INJECT_CHARS,
+      ratio: COMPRESS_RATIO,
+      totalChars,
+      over: totalChars > SOFT_INJECT_CHARS,
+      compressed: dropped.length > 0,
+      indexMode: dropped.length > 0,
+      anchors,
+    },
+  }
+}
+
+function buildInjection(state, sessionId) {
+  return composeInjection(state, sessionId).text
 }
 
 function sessionView(state, sessionId) {
@@ -581,7 +691,68 @@ function sessionView(state, sessionId) {
 }
 
 function visibleItems(state) {
-  return state.items.filter((item) => !item.deletedAt)
+  return state.items.filter((item) => !item.deletedAt && !item.archivedAt)
+}
+
+function archivedItems(state) {
+  return state.items
+    .filter((item) => item.archivedAt && !item.deletedAt)
+    .sort((a, b) => String(b.archivedAt).localeCompare(String(a.archivedAt)))
+}
+
+/** 归档层：不参与注入与默认检索，但内容完整保留，随时可还原。 */
+function archiveView(state) {
+  return archivedItems(state).map((item) => ({
+    id: item.id,
+    title: item.title,
+    body: item.body,
+    tags: item.tags,
+    groupId: item.groupId,
+    status: item.status,
+    anchorMode: item.anchorMode,
+    source: item.source,
+    archivedAt: item.archivedAt,
+    mergedInto: item.mergedInto ?? null,
+    chars: item.title.length + String(item.body ?? '').length,
+  }))
+}
+
+/** 容量画像：注入预算用了多少、文件夹各占多少、最长的几条是谁。 */
+function capacityOf(state) {
+  const charsOf = (item) => item.title.length + String(item.body ?? '').length
+  const live = state.items.filter(
+    (item) => !item.deletedAt && !item.archivedAt && item.status === 'active' && item.enabled,
+  )
+  const total = live.reduce((sum, item) => sum + charsOf(item), 0)
+  const byFolder = new Map()
+  for (const item of live) {
+    const key = item.groupId ?? ''
+    const entry = byFolder.get(key) ?? { id: item.groupId ?? null, count: 0, chars: 0 }
+    entry.count += 1
+    entry.chars += charsOf(item)
+    byFolder.set(key, entry)
+  }
+  return {
+    limit: MAX_INJECT_CHARS,
+    softLimit: SOFT_INJECT_CHARS,
+    threshold: COMPRESS_RATIO,
+    chars: total,
+    items: live.length,
+    ratio: SOFT_INJECT_CHARS > 0 ? Math.min(1, total / SOFT_INJECT_CHARS) : 0,
+    over: total > SOFT_INJECT_CHARS,
+    folders: [...byFolder.values()]
+      .map((entry) => ({ ...entry, name: entry.id ? groupNameOf(state, entry.id) : '未归类' }))
+      .sort((a, b) => b.chars - a.chars),
+    longest: [...live]
+      .sort((a, b) => charsOf(b) - charsOf(a))
+      .slice(0, 8)
+      .map((item) => ({
+        id: item.id,
+        title: item.title,
+        chars: charsOf(item),
+        group: item.groupId ? groupNameOf(state, item.groupId) : null,
+      })),
+  }
 }
 
 function recycledItems(state) {
@@ -608,6 +779,7 @@ function recycleView(state) {
 function snapshot(state, sessionId, extra) {
   const items = visibleItems(state)
   const pending = items.filter((item) => item.status === 'pending')
+  const injection = composeInjection(state, sessionId)
   return {
     ok: true,
     dataDir: DATA_DIR,
@@ -617,6 +789,8 @@ function snapshot(state, sessionId, extra) {
     groups: sortGroups(state.groups),
     items: sortItems(items),
     deleted: recycleView(state),
+    archived: archiveView(state),
+    capacity: capacityOf(state),
     tags: allTags(state),
     stats: {
       groups: state.groups.length,
@@ -625,9 +799,11 @@ function snapshot(state, sessionId, extra) {
       pending: pending.length,
       pinned: items.filter((item) => item.pinned).length,
       deleted: recycledItems(state).length,
+      archived: archivedItems(state).length,
     },
     session: sessionView(state, sessionId),
-    preview: buildInjection(state, sessionId),
+    preview: injection.text,
+    injection: injection.stats,
     updatedAt: state.updatedAt,
   }
 }
@@ -1081,6 +1257,96 @@ async function runOp(op, payload) {
       })
     }
 
+    case 'item.archive': {
+      // 归档 = 从活跃层挪到归档层：不参与注入、不进默认检索，内容完整保留，随时可还原。
+      const ids = Array.isArray(payload.ids) ? payload.ids.filter((id) => typeof id === 'string') : [payload.id]
+      const stamp = nowIso()
+      let moved = 0
+      for (const item of state.items) {
+        if (!ids.includes(item.id) || item.deletedAt || item.archivedAt) continue
+        item.archivedAt = stamp
+        item.updatedAt = stamp
+        moved += 1
+      }
+      for (const selection of Object.values(sessions)) {
+        selection.itemIds = selection.itemIds.filter((id) => !ids.includes(id))
+      }
+      await persist()
+      await persistSessions()
+      return snapshot(state, sessionId, {
+        message: moved ? `已归档 ${moved} 条（不再注入，可在「归档」里还原）` : '这些记忆已经归档了',
+      })
+    }
+
+    case 'item.unarchive': {
+      const ids = Array.isArray(payload.ids) ? payload.ids.filter((id) => typeof id === 'string') : [payload.id]
+      const stamp = nowIso()
+      let moved = 0
+      for (const item of state.items) {
+        if (!ids.includes(item.id) || !item.archivedAt) continue
+        delete item.archivedAt
+        delete item.mergedInto
+        item.updatedAt = stamp
+        moved += 1
+      }
+      await persist()
+      return snapshot(state, sessionId, { message: moved ? `已还原 ${moved} 条` : '这些记忆不在归档里' })
+    }
+
+    case 'item.merge': {
+      // 压缩：把多条合并成一条精炼记忆，原条目进归档层（可回溯），不物理删除。
+      const ids = Array.isArray(payload.ids) ? payload.ids.filter((id) => typeof id === 'string') : []
+      const sources = ids
+        .map((id) => state.items.find((entry) => entry.id === id))
+        .filter((item) => item && !item.deletedAt && !item.archivedAt)
+      if (sources.length < 2) throw fail('至少选择 2 条记忆才能合并')
+      const title = String(payload.title ?? '').trim() || `${sources[0].title}（合并 ${sources.length} 条）`
+      const body =
+        String(payload.body ?? '').trim() ||
+        sources
+          .slice()
+          .sort((a, b) => String(a.createdAt ?? '').localeCompare(String(b.createdAt ?? '')))
+          .map((item) => {
+            const stamp = String(item.updatedAt ?? item.createdAt ?? '').slice(0, 10)
+            return `### ${item.title}${stamp ? `（${stamp}）` : ''}\n${String(item.body ?? '').trim()}`
+          })
+          .join('\n\n')
+      const tags = [...new Set(sources.flatMap((item) => item.tags ?? []))]
+      const groupId = sources.find((item) => item.groupId)?.groupId ?? null
+      const anchorMode = sources.some((item) => item.anchorMode === 'full')
+        ? 'full'
+        : sources.some((item) => item.anchorMode === 'weight')
+          ? 'weight'
+          : 'off'
+      const merged = {
+        id: `m-${randomUUID().slice(0, 8)}`,
+        title,
+        body,
+        tags,
+        groupId,
+        enabled: true,
+        pinned: false,
+        status: 'active',
+        source: 'merge',
+        anchorMode,
+        order: nextOrder(state.items),
+        createdAt: nowIso(),
+        updatedAt: nowIso(),
+      }
+      state.items.push(merged)
+      const stamp = nowIso()
+      for (const item of sources) {
+        item.archivedAt = stamp
+        item.mergedInto = merged.id
+        item.updatedAt = stamp
+      }
+      await persist()
+      return snapshot(state, sessionId, {
+        message: `已把 ${sources.length} 条合并成「${title}」，原条目已归档可回溯`,
+        focusId: merged.id,
+      })
+    }
+
     case 'item.restore': {
       const ids = Array.isArray(payload.ids) ? payload.ids.filter((id) => typeof id === 'string') : [payload.id]
       let restored = 0
@@ -1304,8 +1570,10 @@ async function runOp(op, payload) {
     case 'search': {
       const query = String(payload.query ?? '').trim().toLowerCase()
       if (!query) throw fail('搜索词不能为空')
+      const includeArchived = payload.includeArchived === true
       const hits = state.items
         .filter((item) => !item.deletedAt && item.status === 'active' && item.enabled)
+        .filter((item) => includeArchived || !item.archivedAt)
         .filter((item) =>
           `${item.title}\n${item.body}\n${item.tags.join(' ')}`.toLowerCase().includes(query),
         )
@@ -1318,6 +1586,7 @@ async function runOp(op, payload) {
           group: groupNameOf(state, item.groupId),
           tags: item.tags,
           body: item.body,
+          archived: Boolean(item.archivedAt),
         })),
       }
     }
@@ -1434,7 +1703,12 @@ function registerTools(ctx) {
       const state = await ensureLoaded()
       const query = String(args?.query ?? '').trim().toLowerCase()
       const limit = Math.max(1, Math.min(50, Number(args?.limit) || 10))
-      const pool = state.items.filter((item) => !item.deletedAt && item.status === 'active' && item.enabled)
+      const includeArchived = args?.includeArchived === true
+      const base = state.items.filter(
+        (item) => !item.deletedAt && item.status === 'active' && item.enabled,
+      )
+      const pool = base.filter((item) => includeArchived || !item.archivedAt)
+      const archivedCount = base.filter((item) => item.archivedAt).length
       const hits = (
         query
           ? pool.filter((item) =>
@@ -1442,14 +1716,16 @@ function registerTools(ctx) {
             )
           : pool
       ).slice(0, limit)
+      const archivedNote =
+        archivedCount && !includeArchived ? `（另有 ${archivedCount} 条已归档，默认不参与检索）` : ''
       if (!hits.length) {
-        return `记忆库中没有匹配「${args?.query ?? ''}」的启用记忆（共 ${pool.length} 条启用记忆）。`
+        return `记忆库中没有匹配「${args?.query ?? ''}」的启用记忆（共 ${pool.length} 条启用记忆）${archivedNote}。`
       }
       const lines = [
-        `匹配 ${hits.length} 条（记忆库共 ${pool.length} 条启用记忆）：`,
+        `匹配 ${hits.length} 条（记忆库共 ${pool.length} 条启用记忆）${archivedNote}：`,
         '',
         ...hits.flatMap((item) => [
-          `- ${item.pinned ? '📌 ' : ''}${item.title}  〔${groupNameOf(state, item.groupId)}${item.tags.length ? ' / ' + item.tags.join(' / ') : ''}〕`,
+          `- ${item.pinned ? '📌 ' : ''}${item.title}  〔${groupNameOf(state, item.groupId)}${item.tags.length ? ' / ' + item.tags.join(' / ') : ''}〕${item.archivedAt ? ' 〔已归档〕' : ''}`,
           ...item.body
             .trim()
             .split('\n')
