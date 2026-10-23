@@ -117,10 +117,33 @@ let RECYCLE_KEEP_DAYS = ENV_RECYCLE_DAYS ?? DEFAULT_RECYCLE_DAYS
 const TOMBSTONE_KEEP_DAYS = 90
 
 /**
- * 检索用的同义组：内置一组中文常见说法，用户可在 config.json 的 synonyms 里追加自己的说法
- * （每条是字符串数组），检索时按 0.5 权重扩展召回。
+ * 检索用的同义组：内置一组中文常见说法，用户可在面板里追加自己的说法（v0.9.5 起，
+ * 之前只能手改 config.json 的 synonyms 并重启）。检索时按 0.5 权重扩展召回。
  */
 let SYNONYMS = SYNONYM_GROUPS
+/** 用户自建的同义词组（原始形态，面板要回显），与内置组合并后才是 SYNONYMS。 */
+let CUSTOM_SYNONYMS = []
+
+const SYNONYM_MAX_GROUPS = 80
+const SYNONYM_MAX_WORDS = 8
+const SYNONYM_MAX_LEN = 24
+
+/** 清理用户提交的同义词组：去空、去重、每组至少 2 个词、限条数与词长。返回 null 表示整体非法。 */
+function normalizeSynonymGroups(raw) {
+  if (raw === undefined || raw === null) return []
+  if (!Array.isArray(raw)) return null
+  const out = []
+  for (const entry of raw) {
+    const words = (Array.isArray(entry) ? entry : [entry])
+      .map((word) => String(word ?? '').trim().slice(0, SYNONYM_MAX_LEN))
+      .filter(Boolean)
+    const unique = [...new Set(words)]
+    if (unique.length < 2) continue
+    out.push(unique.slice(0, SYNONYM_MAX_WORDS))
+    if (out.length >= SYNONYM_MAX_GROUPS) break
+  }
+  return out
+}
 
 /**
  * 检索索引缓存：条目上千时每次搜索重建倒排索引会掉帧（面板搜索框是逐键触发）。
@@ -350,8 +373,9 @@ async function loadConfig() {
   if (ENV_RECYCLE_DAYS === null && config.recycleDays !== undefined && config.recycleDays !== null) {
     RECYCLE_KEEP_DAYS = parseRecycleDays(config.recycleDays)
   }
-  // 用户自建的同义词组（config.json 的 synonyms），追加在内置组之后。
-  SYNONYMS = mergeSynonyms(config.synonyms)
+  // 用户自建的同义词组（config.json 的 synonyms）。面板里改完会立即重算，不必重启。
+  CUSTOM_SYNONYMS = normalizeSynonymGroups(config.synonyms) || []
+  SYNONYMS = mergeSynonyms(CUSTOM_SYNONYMS)
   if (gitOk === null) gitOk = await hasGit()
 }
 
@@ -1253,6 +1277,7 @@ function snapshot(state, sessionId, extra) {
     },
     session: sessionView(state, sessionId),
     sessionDefault: SESSION_DEFAULT,
+    synonyms: CUSTOM_SYNONYMS,
     paused: INJECTION_PAUSED,
     pausedSessions: Object.entries(sessions)
       .filter(([, selection]) => selection && selection.paused)
@@ -1471,6 +1496,8 @@ async function runOp(op, payload) {
         ratioLocked: ENV_COMPRESS_RATIO !== null,
         maxCharsLocked: ENV_MAX_CHARS !== null,
         sessionDefault: SESSION_DEFAULT,
+        synonyms: CUSTOM_SYNONYMS,
+        builtinSynonyms: SYNONYM_GROUPS,
         backups: await backupInfo(),
         backupKeep: BACKUP_KEEP_PER_KIND,
       }
@@ -1508,6 +1535,21 @@ async function runOp(op, payload) {
         message: removed ? `已删除 ${removed} 个备份` : '备份目录已经是空的',
         backups: info,
       }
+    }
+
+    case 'synonyms.set': {
+      // 面板里改同义词：写盘 + 立即重算，不用重启。
+      const next = normalizeSynonymGroups(payload.groups)
+      if (next === null) throw fail('同义词要是「数组的数组」，每组至少两个词，例如 [["坚果云","WebDAV"]]')
+      await saveConfig(DATA_DIR, { synonyms: next })
+      CUSTOM_SYNONYMS = next
+      SYNONYMS = mergeSynonyms(next)
+      searchCache = { key: '', index: null }
+      return snapshot(state, sessionId, {
+        message: next.length
+          ? `已保存 ${next.length} 组自定义同义词，下一次搜索就生效`
+          : '已清空自定义同义词，只保留内置的几组',
+      })
     }
 
     case 'budget.set': {

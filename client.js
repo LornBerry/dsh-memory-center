@@ -3471,12 +3471,87 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /* 同义词：内置的几组写死在宿主里，用户自建的存 config.json，这里给个能改的地方 */
+    function SynonymsDialog({ onClose }) {
+      const [text, setText] = useState('')
+      const [builtin, setBuiltin] = useState([])
+      const [busy, setBusy] = useState(false)
+      const [msg, setMsg] = useState('')
+      const [error, setError] = useState('')
+
+      useEffect(() => {
+        api('config.get')
+          .then((res) => {
+            const groups = (res && res.synonyms) || []
+            setText(groups.map((group) => group.join(' ')).join('\n'))
+            setBuiltin((res && res.builtinSynonyms) || [])
+          })
+          .catch((err) => setError(String((err && err.message) || err)))
+      }, [])
+
+      const save = async () => {
+        setBusy(true)
+        setError('')
+        setMsg('')
+        try {
+          const groups = text
+            .split('\n')
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .map((line) => line.split(/[,，、\s]+/).map((word) => word.trim()).filter(Boolean))
+            .filter((group) => group.length >= 2)
+          const res = await api('synonyms.set', { groups })
+          setMsg((res && res.message) || '已保存')
+        } catch (err) {
+          setError(String((err && err.message) || err))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      return h(
+        Modal,
+        { title: '同义词（检索用）', onClose },
+        h(
+          'p',
+          { className: 'dmc-card-hint' },
+          '一行一组，词之间用空格或逗号隔开。搜索时会把这些词当成同一个意思去扩展召回，比如「存哪 放哪 路径 目录」。保存后下一次搜索就生效，不用重启。',
+        ),
+        h('textarea', {
+          className: 'dmc-textarea',
+          rows: 8,
+          value: text,
+          placeholder: '存哪 放哪 路径 目录\n转正 确认 生效',
+          onChange: (event) => setText(event.target.value),
+        }),
+        error ? h('p', { className: 'dmc-card-hint', style: { color: '#c0392b' } }, error) : null,
+        msg ? h('p', { className: 'dmc-card-hint' }, msg) : null,
+        builtin.length
+          ? h(
+              'details',
+              null,
+              h('summary', { className: 'dmc-card-hint' }, `内置的 ${builtin.length} 组（只读）`),
+              builtin.map((group, index) =>
+                h('p', { key: `builtin-${index}`, className: 'dmc-card-hint' }, group.join(' · ')),
+              ),
+            )
+          : null,
+        h(
+          'div',
+          { className: 'dmc-btn-row' },
+          h('button', { className: 'dmc-btn primary', disabled: busy, onClick: save }, busy ? '保存中…' : '保存'),
+          h('button', { className: 'dmc-btn', onClick: onClose }, '关闭'),
+        ),
+      )
+    }
+
     function SettingsSection() {
       const state = useStore()
       const data = state.data
       const [copied, setCopied] = useState(false)
       const [storage, setStorage] = useState(false)
       const [syncOpen, setSyncOpen] = useState(false)
+      const [synOpen, setSynOpen] = useState(false)
 
       useEffect(() => {
         if (!data) refresh()
@@ -3515,6 +3590,15 @@ window.__ModuleLoader__.load({
             },
             data && data.sync && data.sync.mode && data.sync.mode !== 'off' ? '云端同步 · 已开' : '云端同步…',
           ),
+          h(
+            'button',
+            {
+              className: 'dmc-btn is-sm',
+              onClick: () => setSynOpen(true),
+              title: '给检索加用户自定义的同义词组（存 config.json，立即生效）',
+            },
+            '同义词…',
+          ),
           h('span', { className: 'dmc-card-hint' }, '改完立即落盘，两个入口同步。'),
         ),
         h(MemoryPanel, { embedded: true }),
@@ -3527,6 +3611,7 @@ window.__ModuleLoader__.load({
               onDone: () => refresh(),
             })
           : null,
+        synOpen ? h(SynonymsDialog, { onClose: () => setSynOpen(false) }) : null,
         storage
           ? h(StorageDialog, {
               dataDir,
