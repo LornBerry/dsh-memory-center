@@ -2766,19 +2766,40 @@ window.__ModuleLoader__.load({
                 ),
                 data.recycle && data.recycle.tombstones
                   ? h(
-                      'button',
-                      {
-                        className: 'dmc-btn',
-                        title: '删除记录是跨设备同步用的凭据；清早了可能让另一台设备的旧副本把条目推回来',
-                        onClick: () =>
-                          setConfirmAsk({
-                            title: `清理 ${data.recycle.tombstoneDays} 天前的删除记录？`,
-                            message: `现在有 ${data.recycle.tombstones} 条删除记录。只清理老的，不会影响正常条目；但如果你还有设备很久没同步过，那台设备上的旧副本可能因此复活。`,
-                            confirmLabel: '清理旧记录',
-                            onConfirm: () => run('deleted.prune', { days: data.recycle.tombstoneDays }),
-                          }),
-                      },
-                      `清理旧记录（${data.recycle.tombstones}）`,
+                      'span',
+                      { className: 'dmc-btn-row' },
+                      h(
+                        'button',
+                        {
+                          className: 'dmc-btn',
+                          title: '删除记录是跨设备同步用的凭据；清早了可能让另一台设备的旧副本把条目推回来',
+                          onClick: () =>
+                            setConfirmAsk({
+                              title: `清理 ${data.recycle.tombstoneDays} 天前的删除记录？`,
+                              message: `现在有 ${data.recycle.tombstones} 条删除记录。只清理老的，不会影响正常条目；但如果你还有设备很久没同步过，那台设备上的旧副本可能因此复活。`,
+                              confirmLabel: '清理旧记录',
+                              onConfirm: () => run('deleted.prune', { days: data.recycle.tombstoneDays }),
+                            }),
+                        },
+                        `清理 ${data.recycle.tombstoneDays} 天前（${data.recycle.tombstones}）`,
+                      ),
+                      h(
+                        'button',
+                        {
+                          className: 'dmc-btn',
+                          title: '把这些删除记录一次清空（不可撤销）',
+                          onClick: () =>
+                            setConfirmAsk({
+                              title: `清空全部 ${data.recycle.tombstones} 条删除记录？`,
+                              message:
+                                '删除记录用于跨设备同步：清空后，如果另一台设备还留着这些条目的旧副本，下次同步可能把它们推回来。只有确定没有别的设备在用同一个库时才建议清空。',
+                              confirmLabel: '全部清空',
+                              danger: true,
+                              onConfirm: () => run('deleted.prune', { all: true }),
+                            }),
+                        },
+                        `清空删除记录（${data.recycle.tombstones}）`,
+                      ),
                     )
                   : null,
                 h('button', { className: 'dmc-btn', onClick: clearSelect }, '取消选择'),

@@ -298,6 +298,36 @@ expect(
   '备份内容不对',
 )
 
+// 墓碑记录（删除记录）的清理：默认只清够老的，all:true 一次清空
+const tombstoneStore = await readStore()
+const tombstoneCount = (tombstoneStore.deleted || []).length
+const stale = await call({ op: 'deleted.prune' })
+const keepDays = stale.body.recycle.tombstoneDays || 90
+const cutoff = Date.now() - keepDays * 24 * 60 * 60 * 1000
+const leftTombstones = (await readStore()).deleted || []
+expect(
+  `默认清理只清超过 ${keepDays} 天的`,
+  leftTombstones.filter((entry) => {
+    const at = Date.parse(String(entry.at ?? ''))
+    return !Number.isNaN(at) && at < cutoff
+  }).length,
+  (v) => v === 0,
+  JSON.stringify(leftTombstones.map((entry) => entry.at)),
+)
+const cleared = await call({ op: 'deleted.prune', all: true })
+expect(
+  tombstoneCount ? 'all:true 一次清空全部删除记录' : '没有记录时提示为空',
+  tombstoneCount ? cleared.body.recycle.tombstones : cleared.body.message,
+  (v) => (tombstoneCount ? v === 0 : typeof v === 'string' && v.includes('空')),
+  JSON.stringify({ tombstones: cleared.body.recycle.tombstones, message: cleared.body.message }),
+)
+expect(
+  '清空删除记录不影响正常条目',
+  (await readStore()).items.filter((item) => !item.deletedAt).length,
+  (v) => v > 0,
+  '正常条目被误删了',
+)
+
 await fs.rm(tmpRoot, { recursive: true, force: true })
 
 console.log(failures.length ? `\nRECYCLE FAILED: ${failures.join(', ')}\n` : '\nRECYCLE OK\n')

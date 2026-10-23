@@ -161,7 +161,7 @@
   - `scope:'sessions'` + `sessionIds`：只暂停这些会话，把原选择存进 `sessions[id].paused = { at, previous }` 并把该会话置为 `mode:'none'`；恢复时原样还原，原本「未决定」的会话则删除记录（回到会弹询问卡片）。
   面板工具栏按钮在未暂停时先弹选择「暂停所有会话 / 只暂停当前会话」，按钮文案与左栏提示条跟随当前状态（全局 / 本会话）；`snapshot.pausedSessions` 列出仍在暂停的会话。
 - **待确认积压提醒**：左栏「待确认」条目数 ≥ 3 时，面板顶部出现提示条「有 N 条记忆等你转正」并带跳转；不阻断任何操作。
-- **删除记录回收**：墓碑默认保留 `DSH_MEMORY_TOMBSTONE_DAYS`（90）天；`deleted.prune` 清理早于 N 天的记录（`dryRun` 支持预览），回收站底栏显示 `recycle.tombstones` 条数并提供「清理旧记录」按钮（二次确认）。
+- **删除记录回收**：墓碑默认保留 `DSH_MEMORY_TOMBSTONE_DAYS`（90）天；`deleted.prune` 清理早于 N 天的记录（`dryRun` 支持预览），`deleted.prune { all: true }` 一次清空全部记录；回收站底栏显示 `recycle.tombstones` 条数，提供「清理 N 天前」与「清空删除记录」两个按钮（都要二次确认）。
 - **检索回归集**：`dev/search-regression.test.mjs`——22 条真实感记忆 + 22 个自然语言查询 + 4 个必然无结果的查询，断言目标条目进前 3、噪声查询零命中。改分词/BM25/同义词必须跑它；已知局限（中文二元组无法理解否定）写在测试文件注释里。
 
 ## 4. 验收标准
@@ -198,6 +198,7 @@
 | AC28 | `DSH_MEMORY_MAX_CHARS` 可在容量弹窗里用拉条改（4000–50000，步进 1000），应用后注入上限与压缩线立即重算并写入 `config.json` 的 `maxChars`，刷新/重启后仍生效；设了该环境变量时拉条只读并说明原因；越界值被拒 | `node dev/session-default.test.mjs` + 手动 |
 | AC29 | 面板工具栏的「新会话默认」可选「每次都问 / 不加载 / 全部加载 / 当前会话选的文件夹」，写入 `config.json` 的 `sessionDefault`；设成非 `ask` 后新会话不再弹询问卡片且按默认注入，单个会话自己的选择覆盖默认，「清除本会话选择」后退回默认 | `node dev/session-default.test.mjs` |
 | AC30 | 两条说法冲突的记忆（同为启用、未归档）被判为同主题：注入时旧版带〔旧版…以「<最新标题>」为准〕、头部有统一说明、`stats.stale=1`；检索命中旧版时行尾带同款提示；面板条目出现「旧版」徽标、左栏出现「同主题 N 组 · 旧版 M 条」；归档/停用条目不参与；同一分钟内写入的不标新旧 | `node dev/topic.test.mjs` + `node dev/smoke-client.mjs` |
+| AC31 | 删除记录可一次清空：`deleted.prune { all: true }` 清掉全部墓碑并返回剩余 0，默认调用只清超过保留天数的那些，正常条目与 `store.json` 结构不受影响 | `node dev/recycle.test.mjs` |
 
 ## 5. 非目标（v1 不做）
 

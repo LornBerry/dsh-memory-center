@@ -1618,22 +1618,32 @@ async function runOp(op, payload) {
     }
 
     case 'deleted.prune': {
-      // 墓碑回收：只清「够老」的墓碑，避免另一台设备的旧副本把条目推回来。
+      // 墓碑回收：默认只清「够老」的墓碑，避免另一台设备的旧副本把条目推回来。
+      // all:true 是明确要求清空全部记录（面板里那个「清空删除记录」按钮），会一次清掉。
+      const all = payload.all === true
       const days = Number.isFinite(Number(payload.days)) && Number(payload.days) > 0 ? Number(payload.days) : TOMBSTONE_KEEP_DAYS
       const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
       const before = (state.deleted ?? []).length
-      const kept = (state.deleted ?? []).filter((entry) => {
-        const at = Date.parse(String(entry?.at ?? ''))
-        return Number.isNaN(at) || at >= cutoff
-      })
+      const kept = all
+        ? []
+        : (state.deleted ?? []).filter((entry) => {
+            const at = Date.parse(String(entry?.at ?? ''))
+            return Number.isNaN(at) || at >= cutoff
+          })
       const removed = before - kept.length
       if (!removed) {
-        return snapshot(state, sessionId, { message: `没有超过 ${days} 天的删除记录需要清理` })
+        return snapshot(state, sessionId, {
+          message: all ? '删除记录本来就是空的' : `没有超过 ${days} 天的删除记录需要清理`,
+        })
       }
       state.deleted = kept
       state.updatedAt = nowIso()
       await persist()
-      return snapshot(state, sessionId, { message: `已清理 ${removed} 条 ${days} 天前的删除记录（还剩 ${kept.length} 条）` })
+      return snapshot(state, sessionId, {
+        message: all
+          ? `已清空 ${removed} 条删除记录`
+          : `已清理 ${removed} 条 ${days} 天前的删除记录（还剩 ${kept.length} 条）`,
+      })
     }
 
     case 'config.set': {
