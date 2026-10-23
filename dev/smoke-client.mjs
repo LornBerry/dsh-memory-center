@@ -388,8 +388,8 @@ for (const { options, component } of registrations) {
         const posNew = html.indexOf('排序测试条目')
         if (posNew < 0 || posOld < 0) fail.push(`排序变体${tag} 没渲染出两条被测条目`)
         else if (posPinned > posOld || posPinned > posNew) fail.push(`排序变体${tag}：置顶条目应始终在最前`)
-        else if (tag === ' sort-updated' && !(posNew < posOld)) fail.push('选「最近修改 · 新→旧」后，时间更新的条目应排在前面')
-        else if (tag === ' sort-updated-asc' && !(posOld < posNew)) fail.push('选「最近修改 · 旧→新」后，时间更旧的条目应排在前面')
+        else if (tag === ' sort-updated' && !(posNew < posOld)) fail.push('选「按修改时间顺序」后，时间更新的条目应排在前面')
+        else if (tag === ' sort-updated-asc' && !(posOld < posNew)) fail.push('内部值 updated-asc 时，时间更旧的条目应排在前面')
       }
       if (options.name === 'main' && tag === ' menu-folder') {
         if (!html.includes('重命名')) fail.push('文件夹菜单缺少「重命名」')

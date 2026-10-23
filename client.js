@@ -1536,8 +1536,8 @@ window.__ModuleLoader__.load({
       const [dropKey, setDropKey] = useState(null)
       const [storageOpen, setStorageOpen] = useState((props && props.debugStorage) || false)
       const [syncOpen, setSyncOpen] = useState((props && props.debugSync) || false)
-      // 排序用一个下拉表达（值形如 updated-desc）：方向和字段写在一个选项里，
-      // 免得出现「按了箭头但当前是默认顺序，所以什么也没变」的死按钮。
+      // 排序用一个下拉表达（值形如 updated-desc）：内部仍保留方向后缀，
+      // 但界面上只有四个选项（默认 / 首字母 / 修改时间 / 创建时间），方向固定为常用的那个。
       const [sort, setSort] = useState((props && props.debugSort) || 'manual')
       const sortKey = sort.split('-')[0]
       const sortDir = sort.split('-')[1] || 'desc'
@@ -2216,16 +2216,13 @@ window.__ModuleLoader__.load({
                 {
                   className: 'dmc-sort',
                   value: sort,
-                  title: '排序方式（字段和方向都在这一个选项里）',
+                  title: '排序方式',
                   onChange: (event) => setSort(event.target.value),
                 },
-                h('option', { value: 'manual' }, '默认顺序（可拖拽）'),
-                h('option', { value: 'updated-desc' }, '最近修改 · 新→旧'),
-                h('option', { value: 'updated-asc' }, '最近修改 · 旧→新'),
-                h('option', { value: 'created-desc' }, '最近创建 · 新→旧'),
-                h('option', { value: 'created-asc' }, '最近创建 · 旧→新'),
-                h('option', { value: 'title-asc' }, '标题 · A→Z'),
-                h('option', { value: 'title-desc' }, '标题 · Z→A'),
+                h('option', { value: 'manual' }, '默认顺序'),
+                h('option', { value: 'title-asc' }, '按首字母顺序'),
+                h('option', { value: 'updated-desc' }, '按修改时间顺序'),
+                h('option', { value: 'created-desc' }, '按创建时间顺序'),
               ),
               h(
                 'div',
