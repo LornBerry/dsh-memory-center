@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
   factory(require) {
     const React = require('react')
     const h = React.createElement
-    const { useState, useEffect, useMemo, useRef, useCallback } = React
+    const { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } = React
 
     const PANEL_ID = 'memory'
     const API = '/dsh-memory/api'
@@ -196,7 +196,10 @@ window.__ModuleLoader__.load({
         .dmc-item.is-deleted { opacity: .75; border-style: dashed; }
         .dmc-md-preview { border: 1px solid rgba(127,127,127,.25); border-radius: 8px; padding: 8px 10px; min-height: 96px; max-height: 260px; overflow: auto; background: rgba(127,127,127,.06); }
         .dmc-editor-tabs { display: flex; gap: 6px; margin-bottom: 6px; }
-        .dmc-menu { position: fixed; min-width: 176px; padding: 4px; border-radius: 10px; border: 1px solid rgba(127,127,127,.32); background: var(--dsh-popover-bg, #1f2126); color: var(--dsh-popover-fg, #e6e6e6); box-shadow: 0 14px 36px rgba(0,0,0,.36); z-index: 600; }
+        .dmc-menu { position: fixed; min-width: 176px; padding: 4px; border-radius: 10px; border: 1px solid rgba(127,127,127,.32); background: var(--dsh-popover-bg, #1f2126); color: var(--dsh-popover-fg, #e6e6e6); box-shadow: 0 14px 36px rgba(0,0,0,.36); z-index: 600; max-height: calc(100vh - 16px); overflow-y: auto; overscroll-behavior: contain; }
+        .dmc-menu::-webkit-scrollbar { width: 8px; }
+        .dmc-menu::-webkit-scrollbar-thumb { background: rgba(127,127,127,.42); border-radius: 4px; }
+        .dmc-menu::-webkit-scrollbar-track { background: transparent; }
         .dmc-menu-item { display: block; width: 100%; text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 6px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
         .dmc-menu-item:hover { background: rgba(127,127,127,.18); }
         .dmc-menu-item.danger { color: #ff7a7a; }
@@ -1525,6 +1528,8 @@ window.__ModuleLoader__.load({
       const [preview, setPreview] = useState(null)
       const [selected, setSelected] = useState((props && props.debugSelected) || [])
       const [menu, setMenu] = useState((props && props.debugMenu) || null)
+      const menuRef = useRef(null)
+      const [menuSpot, setMenuSpot] = useState(null)
       const [dragIds, setDragIds] = useState([])
       const [dropKey, setDropKey] = useState(null)
       const [storageOpen, setStorageOpen] = useState((props && props.debugStorage) || false)
@@ -1669,6 +1674,7 @@ window.__ModuleLoader__.load({
         if (event && event.stopPropagation) event.stopPropagation()
         const x = event && typeof event.clientX === 'number' ? event.clientX : 80
         const y = event && typeof event.clientY === 'number' ? event.clientY : 120
+        setMenuSpot(null)
         setMenu({ kind, id, x, y })
       }
       const openMenuAtButton = (event, kind, id) => {
@@ -1677,6 +1683,7 @@ window.__ModuleLoader__.load({
         const rect = event && event.currentTarget && event.currentTarget.getBoundingClientRect
           ? event.currentTarget.getBoundingClientRect()
           : null
+        setMenuSpot(null)
         setMenu({ kind, id, x: rect ? rect.left : 80, y: rect ? rect.bottom + 4 : 120 })
       }
 
@@ -1712,6 +1719,23 @@ window.__ModuleLoader__.load({
           extra || null,
         )
 
+      // 菜单先按粗略高度摆，再用真实尺寸纠正一次：矮屏时从鼠标上方展开，绝不让菜单出屏幕。
+      useLayoutEffect(() => {
+        if (!menu) return
+        const el = menuRef.current
+        if (!el || typeof el.getBoundingClientRect !== 'function') return
+        const vw = (typeof window !== 'undefined' && window.innerWidth) || 1200
+        const vh = (typeof window !== 'undefined' && window.innerHeight) || 800
+        const rect = el.getBoundingClientRect()
+        const width = Math.min(rect.width || 208, vw - 16)
+        const height = Math.min(rect.height || 0, vh - 16)
+        const left = Math.max(8, Math.min(menu.x, vw - width - 8))
+        let top = menu.y
+        if (top + height > vh - 8) top = menu.y - height - 4
+        top = Math.max(8, Math.min(top, Math.max(8, vh - height - 8)))
+        setMenuSpot((prev) => (prev && prev.left === left && prev.top === top ? prev : { left, top }))
+      }, [menu])
+
       // 资源管理器式的右键/「…」菜单：文件夹与条目的全部动作都收在这里，行上不再挤按钮。
       const menuNode = () => {
         if (!menu) return null
@@ -1723,7 +1747,7 @@ window.__ModuleLoader__.load({
           const vh = typeof window !== 'undefined' && window.innerHeight ? window.innerHeight : 800
           return { left: Math.max(8, Math.min(x, vw - width - 8)), top: Math.max(8, Math.min(y, vh - height - 8)) }
         }
-        const spot = at(menu.x, menu.y)
+        const spot = menuSpot || at(menu.x, menu.y)
         const item =
           menu.kind === 'item'
             ? (data.items || []).find((entry) => entry.id === menu.id) ||
@@ -1845,7 +1869,7 @@ window.__ModuleLoader__.load({
           },
           h(
             'div',
-            { className: 'dmc-menu', style: { left: `${spot.left}px`, top: `${spot.top}px` }, onClick: (event) => event.stopPropagation() },
+            { className: 'dmc-menu', ref: menuRef, style: { left: `${spot.left}px`, top: `${spot.top}px` }, onClick: (event) => event.stopPropagation() },
             ...body,
           ),
         )
