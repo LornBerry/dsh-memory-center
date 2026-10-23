@@ -167,7 +167,8 @@
 | AC23 | 面板搜索框、`memory_search`、写入前查重结果一致；`synonyms` 里追加 `["存哪","存储位置"]` 后，原来搜不到的说法也能命中 | `node dev/search.test.mjs` + 手动 |
 | AC24 | 压缩以整条为单位：进正文的条目正文必须完整出现，不允许出现半条；任何情况下注入文本不超过硬上限 | `node dev/budget.test.mjs` |
 | AC25 | 归档的条目不参与注入、搜索与计数，可在「归档」页批量还原；合并后原条目全部转入归档并记录 `mergedInto` | `node dev/governance.test.mjs`（如存在）+ 手动 |
-| AC26 | 回收站保留天数可在面板底栏改动（写入 `config.json` 的 `recycleDays`、立即生效）、显示回收站占用字符数；越界值被拒；设了 `DSH_MEMORY_RECYCLE_DAYS` 时下拉只读；改小天数导致待清理时为 `dryRun` 预览 + 二次确认，正式清理前写 `store.json.pre-purge-<时间>` 备份 | `node dev/recycle.test.mjs` |
+| AC26 | 回收站保留天数可在面板底栏改动（写入 `config.json` 的 `recycleDays`、立即生效）、显示回收站占用字符数；越界值被拒；设了 `DSH_MEMORY_RECYCLE_DAYS` 时下拉只读；改小天数导致待清理时为 `dryRun` 预览 + 二次确认，正式清理前写 `<数据目录>/backups/pre-purge-<时间>.json` 整库备份 | `node dev/recycle.test.mjs` |
+| AC27 | 三类自动备份（`corrupt` / `pre-switch` / `pre-purge`）统一落在 `<数据目录>/backups/`，每种只保留最近 5 份；老版本散在数据目录根上的 `store.json.corrupt-*` 在下次加载时自动迁入；`backups.prune` / `backups.clear` 只删这三类文件，不碰 `store.json` / `sessions.json` / `config.json` | `node dev/backups.test.mjs` |
 
 ## 5. 非目标（v1 不做）
 

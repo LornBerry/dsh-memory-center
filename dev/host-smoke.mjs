@@ -149,8 +149,8 @@ await fs.writeFile(
 const switched = await call('POST', { op: 'config.set', dir: occupied })
 expect('切到已有记忆的目录会合并而非覆盖', switched.body.items?.some((entry) => entry.title === '目标已有'), (v) => v === true, '目标条目应存在')
 expect('切换后原有条目仍在', switched.body.items?.length, (v) => v >= 3, '应有种子 + 合并条目')
-const backups = (await fs.readdir(occupied)).filter((name) => name.startsWith('store.json.pre-switch-'))
-expect('切换前备份了目标原文件', backups.length, (v) => v >= 1, '应有 .pre-switch- 备份')
+const backups = (await fs.readdir(path.join(occupied, 'backups'))).filter((name) => name.startsWith('pre-switch-'))
+expect('切换前备份了目标原文件', backups.length, (v) => v >= 1, '应有 backups/pre-switch- 备份')
 
 // 5) 默认模式（没有 DSH_MEMORY_CONFIG）：配置文件应落在数据目录内部，不会另找地方
 delete process.env.DSH_MEMORY_CONFIG

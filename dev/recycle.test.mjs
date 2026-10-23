@@ -288,9 +288,9 @@ expect('dryRun 不改配置', cfgAfterDry.recycleDays, (v) => v === 30, 'dryRun 
 const real = await callOn(handler3, { op: 'recycle.set', days: 1 })
 expect('确认后真的清理', real.purged, (v) => v === 2, JSON.stringify(real))
 expect('清理后磁盘条目减少', (await readStore()).items.length, (v) => v === before9 - 2, '应少两条')
-const backups = (await fs.readdir(tmpRoot)).filter((name) => name.startsWith('store.json.pre-purge-'))
+const backups = (await fs.readdir(path.join(tmpRoot, 'backups'))).filter((name) => name.startsWith('pre-purge-'))
 expect('清理前留了整库备份', backups.length, (v) => v === 1, JSON.stringify(backups))
-const backupJson = backups.length ? JSON.parse(await fs.readFile(path.join(tmpRoot, backups[0]), 'utf8')) : { items: [] }
+const backupJson = backups.length ? JSON.parse(await fs.readFile(path.join(tmpRoot, 'backups', backups[0]), 'utf8')) : { items: [] }
 expect(
   '备份里还能找到被删的条目',
   backupJson.items.some((item) => item.id === 'm-expiring1'),

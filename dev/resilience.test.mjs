@@ -87,8 +87,8 @@ expect('错误里带 store.json 路径', first.body.error, (v) => typeof v === '
 
 const second = await callHandler(handlerA)
 expect('第二次请求自动恢复 = 200', second.status, (v) => v === 200, '不应永久卡死')
-const backupA = (await fs.readdir(dirA)).filter((name) => name.startsWith('store.json.corrupt-'))
-expect('坏文件被改名备份', backupA.length, (v) => v === 1, '应有 .corrupt- 备份')
+const backupA = (await fs.readdir(path.join(dirA, 'backups'))).filter((name) => name.startsWith('corrupt-'))
+expect('坏文件被挪进 backups/corrupt-*', backupA.length, (v) => v === 1, '应有 backups/corrupt- 备份')
 expect('恢复后建了空库种子', second.body.items?.length, (v) => v >= 3, '应重建种子')
 
 /* 场景二：第一次 500 之后把文件修好，下一次请求直接读到修好的内容（无需重启） */
@@ -122,7 +122,7 @@ await fs.writeFile(
 const repaired = await callHandler(handlerB)
 expect('修好文件后无需重启 = 200', repaired.status, (v) => v === 200, '应读到修好的内容')
 expect('读到修好的条目', repaired.body.items?.[0]?.title, (v) => v === '修好了', '应读到修复后的库')
-const backupB = (await fs.readdir(dirB)).filter((name) => name.startsWith('store.json.corrupt-'))
+const backupB = (await fs.readdir(path.join(dirB, 'backups')).catch(() => [])).filter((name) => name.startsWith('corrupt-'))
 expect('文件修好后不再产生备份', backupB.length, (v) => v === 0, '应直接读成功')
 
 await fs.rm(tmpRoot, { recursive: true, force: true })

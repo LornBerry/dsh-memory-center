@@ -92,6 +92,7 @@ node dev/budget.test.mjs     # 注入预算与压缩线：默认 80%、整条不
 node dev/search.test.mjs     # 检索：分词 / BM25 / 同义词扩展 / 片段 / 余弦工具
 node dev/anchor.test.mjs     # 锚点影响注入：完全锚点必进、权重锚点靠前
 node dev/anchor-infer.test.mjs # 锚点初判规则：硬性/偏好/普通事实、优先级、理由文案
+node dev/backups.test.mjs    # 备份生命周期：同种只留 5 份、老位置自动迁入、清理不误伤数据文件
 node dev/doctor.mjs --url http://127.0.0.1:<端口>   # 安装与运行状态自检
 ```
 

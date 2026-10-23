@@ -20,7 +20,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { pickDataDir } from '../lib/paths.js'
+import { candidateDataDirs } from '../lib/paths.js'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const PROFILE = process.env.DSH_PROFILE_DIR || path.join(process.env.USERPROFILE || '', '.dsh', 'profiles', 'desktop')
@@ -179,10 +179,18 @@ if (!BASE) {
 /* ---------------------------------------------------------------- 5. 数据 */
 
 console.log('\n== 本地数据 ==')
-// 复用接口报回来的真实数据目录；接口不通时才退回本地探测（顺序见 lib/paths.js）
-const dataDir = apiDataDir || process.env.DSH_MEMORY_DIR || (await pickDataDir())
-const storeFile = path.join(dataDir, 'store.json')
-if (!existsSync(storeFile)) {
+// 复用接口报回来的真实数据目录；接口不通时才退回本地探测。
+// 这里必须只读：体检不该在用户磁盘上创建目录或写探针文件，
+// 所以按候选顺序找第一个已经存在 store.json 的目录，找不到就如实报错。
+const probeDir = candidateDataDirs().find((dir) => existsSync(path.join(dir, 'store.json')))
+const dataDir = apiDataDir || process.env.DSH_MEMORY_DIR || probeDir
+if (!dataDir) {
+  bad('未找到数据目录', '候选路径里都没有 store.json', '确认插件已装好并至少打开过一次记忆面板；或用 --url 指向正在运行的 DSH')
+}
+const storeFile = dataDir ? path.join(dataDir, 'store.json') : ''
+if (!storeFile) {
+  // 上面已经报错，后面不再重复检查
+} else if (!existsSync(storeFile)) {
   warn('store.json 不存在', storeFile, '首次打开面板时会自动创建；路径不同就查 config.get 的 dataDir')
 } else {
   try {

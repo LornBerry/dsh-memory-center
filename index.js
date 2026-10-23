@@ -114,6 +114,7 @@ let DATA_DIR = ''
 let STORE_FILE = ''
 let SESSIONS_FILE = ''
 let CONFIG_FILE = ''
+let BACKUP_DIR = ''
 let autoDir = ''
 let sync = normalizeSync(null)
 let gitOk = null
@@ -127,6 +128,136 @@ function applyDataDir(dir) {
   DATA_DIR = dir
   STORE_FILE = path.join(dir, 'store.json')
   SESSIONS_FILE = path.join(dir, 'sessions.json')
+  BACKUP_DIR = path.join(dir, 'backups')
+}
+
+/* ------------------------------------------------------------- 备份生命周期 */
+
+/**
+ * 备份统一放 `<数据目录>/backups/`，而不是散在数据目录根下：
+ *   corrupt-<时间>.json      库文件坏到修不好时，坏文件被挪进来
+ *   pre-switch-<时间>.json   面板切数据目录、目标已有记忆时，切之前的备份
+ *   pre-purge-<时间>.json    回收站到期清理前，清理之前的备份
+ * 每种只保留最近 BACKUP_KEEP_PER_KIND 份；清理只碰 backups/ 里的这三类文件，
+ * 永远不碰 store.json / config.json / sessions.json。
+ */
+const BACKUP_KINDS = ['corrupt', 'pre-switch', 'pre-purge']
+const BACKUP_KEEP_PER_KIND = 5
+const LEGACY_BACKUP_PREFIX = 'store.json.'
+
+function newStamp() {
+  return new Date().toISOString().replace(/[:.]/g, '-')
+}
+
+function backupPath(kind, stamp = newStamp(), dir = BACKUP_DIR) {
+  return path.join(dir, `${kind}-${stamp}.json`)
+}
+
+/** 复制一份备份（源文件保留）。失败不阻断主流程。dir 默认当前数据目录的 backups/。 */
+async function writeBackup(sourceFile, kind, dir = BACKUP_DIR) {
+  try {
+    await fs.mkdir(dir, { recursive: true })
+    await fs.copyFile(sourceFile, backupPath(kind, newStamp(), dir))
+    await pruneBackups(BACKUP_KEEP_PER_KIND, dir)
+  } catch {
+    /* 备份失败不影响主流程 */
+  }
+}
+
+/** 把源文件挪成备份（源文件不该再留在原位时用，例如坏掉的 store.json）。 */
+async function moveToBackup(sourceFile, kind, dir = BACKUP_DIR) {
+  try {
+    await fs.mkdir(dir, { recursive: true })
+    const dest = backupPath(kind, newStamp(), dir)
+    try {
+      await fs.rename(sourceFile, dest)
+    } catch {
+      await fs.copyFile(sourceFile, dest)
+      await fs.unlink(sourceFile).catch(() => {})
+    }
+    await pruneBackups(BACKUP_KEEP_PER_KIND, dir)
+  } catch {
+    /* 备份失败不影响主流程 */
+  }
+}
+
+/** 每种备份只留最近 keep 份（按 mtime）。返回删掉几份。 */
+async function pruneBackups(keep = BACKUP_KEEP_PER_KIND, dir = BACKUP_DIR) {
+  let entries = []
+  try {
+    entries = await fs.readdir(dir)
+  } catch {
+    return { removed: 0 }
+  }
+  const groups = new Map()
+  for (const name of entries) {
+    const kind = BACKUP_KINDS.find((candidate) => name.startsWith(`${candidate}-`))
+    if (!kind) continue
+    const full = path.join(dir, name)
+    const stat = await fs.stat(full).catch(() => null)
+    if (!stat || !stat.isFile()) continue
+    if (!groups.has(kind)) groups.set(kind, [])
+    groups.get(kind).push({ full, mtime: stat.mtimeMs })
+  }
+  let removed = 0
+  for (const list of groups.values()) {
+    list.sort((a, b) => b.mtime - a.mtime)
+    for (const entry of list.slice(keep)) {
+      await fs.unlink(entry.full).then(() => { removed += 1 }).catch(() => {})
+    }
+  }
+  return { removed }
+}
+
+/** 老版本把备份写在数据目录根下（store.json.corrupt-…），这里挪进 backups/。 */
+async function migrateLegacyBackups() {
+  let entries = []
+  try {
+    entries = await fs.readdir(DATA_DIR)
+  } catch {
+    return
+  }
+  const legacy = entries.filter((name) => name.startsWith(LEGACY_BACKUP_PREFIX))
+  if (!legacy.length) return
+  await fs.mkdir(BACKUP_DIR, { recursive: true }).catch(() => {})
+  for (const name of legacy) {
+    const rest = name.slice(LEGACY_BACKUP_PREFIX.length)
+    const kind = BACKUP_KINDS.find((candidate) => rest.startsWith(`${candidate}-`))
+    if (!kind) continue
+    const from = path.join(DATA_DIR, name)
+    const to = path.join(BACKUP_DIR, `${kind}-${rest.slice(kind.length + 1)}`)
+    try {
+      if (await fs.stat(to).then(() => true).catch(() => false)) {
+        await fs.unlink(from)
+      } else {
+        await fs.rename(from, to)
+      }
+    } catch {
+      /* 挪不动就算了，不影响使用 */
+    }
+  }
+  await pruneBackups()
+}
+
+/** 面板要显示的备份概况：数量、总大小、每种各有几份。 */
+async function backupInfo() {
+  const info = { dir: BACKUP_DIR, count: 0, bytes: 0, kinds: {} }
+  let entries = []
+  try {
+    entries = await fs.readdir(BACKUP_DIR)
+  } catch {
+    return info
+  }
+  for (const name of entries) {
+    const kind = BACKUP_KINDS.find((candidate) => name.startsWith(`${candidate}-`))
+    if (!kind) continue
+    const stat = await fs.stat(path.join(BACKUP_DIR, name)).catch(() => null)
+    if (!stat || !stat.isFile()) continue
+    info.count += 1
+    info.bytes += stat.size
+    info.kinds[kind] = (info.kinds[kind] || 0) + 1
+  }
+  return info
 }
 
 async function readConfigDir(file) {
@@ -403,7 +534,7 @@ function queueWrite(file, value) {
  * 读 store.json：损坏时不再让插件永久卡死。
  *
  * 第一次解析失败先带着文件路径报错（用户可能马上改好重试，此时不动文件）；
- * 仍然失败才把坏文件改名备份成 `store.json.corrupt-<时间>`，回退空库并重建，
+ * 仍然失败才把坏文件挪进 `backups/corrupt-<时间>.json`，回退空库并重建，
  * 保证面板不会因为一段坏 JSON 整个不可用。
  */
 let storeReadFailed = false
@@ -424,12 +555,10 @@ async function readStoreFile(file) {
     if (!storeReadFailed) {
       storeReadFailed = true
       throw new Error(
-        `记忆库文件无法解析：${file}\n请修复这个 JSON 文件后重试；再次打开面板时如果仍然损坏，插件会把它备份成 ${file}.corrupt-<时间> 并重建空库。\n原始错误：${error.message}`,
+        `记忆库文件无法解析：${file}\n请修复这个 JSON 文件后重试；再次打开面板时如果仍然损坏，插件会把它挪进 backups/corrupt-<时间>.json 并重建空库。\n原始错误：${error.message}`,
       )
     }
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-    const backup = `${file}.corrupt-${stamp}`
-    await fs.rename(file, backup).catch(() => {})
+    await moveToBackup(file, 'corrupt')
     storeReadFailed = false
     return null
   }
@@ -440,6 +569,9 @@ async function ensureLoaded() {
   if (!loading) {
     loading = (async () => {
       await loadConfig()
+      // 老的备份散在数据目录根下（store.json.corrupt-…），先归拢进 backups/ 再按数量裁剪
+      await migrateLegacyBackups()
+      await pruneBackups()
       // 先同步再读盘：换一台设备第一次打开时，记忆就已经在库里了。
       if (syncEnabled() && sync.autoPull) {
         await runSyncNow({ quiet: true }).catch(() => {})
@@ -1152,7 +1284,44 @@ async function runOp(op, payload) {
         softLimit: SOFT_INJECT_CHARS,
         maxChars: MAX_INJECT_CHARS,
         ratioLocked: ENV_COMPRESS_RATIO !== null,
+        backups: await backupInfo(),
+        backupKeep: BACKUP_KEEP_PER_KIND,
       }
+
+    case 'backups.prune': {
+      // 手动整理：把每种备份裁到 keep 份（默认与自动清理一致）
+      const keep = Math.max(1, Math.min(20, Number(payload.keep) || BACKUP_KEEP_PER_KIND))
+      const result = await pruneBackups(keep)
+      const info = await backupInfo()
+      return {
+        ok: true,
+        message: result.removed
+          ? `已清理 ${result.removed} 个旧备份，还剩 ${info.count} 个`
+          : `没有可清理的备份（共 ${info.count} 个）`,
+        backups: info,
+      }
+    }
+
+    case 'backups.clear': {
+      // 只删 backups/ 里这三类文件；store.json / config.json / sessions.json 一律不碰
+      let entries = []
+      try {
+        entries = await fs.readdir(BACKUP_DIR)
+      } catch {
+        entries = []
+      }
+      let removed = 0
+      for (const name of entries) {
+        if (!BACKUP_KINDS.some((kind) => name.startsWith(`${kind}-`))) continue
+        await fs.unlink(path.join(BACKUP_DIR, name)).then(() => { removed += 1 }).catch(() => {})
+      }
+      const info = await backupInfo()
+      return {
+        ok: true,
+        message: removed ? `已删除 ${removed} 个备份` : '备份目录已经是空的',
+        backups: info,
+      }
+    }
 
     case 'budget.set': {
       if (ENV_COMPRESS_RATIO !== null) {
@@ -1209,11 +1378,10 @@ async function runOp(op, payload) {
           }
           if (incoming.groups.length || incoming.items.length) {
             // 目标目录不是空库：直接覆盖等于悄悄吞掉那边的记忆。改为条目级合并，
-            // 并把目标原文件留一份 .pre-switch-<时间> 备份，事后可以人工核对。
+            // 并把目标原文件留一份 pre-switch 备份，事后可以人工核对。
             const current = store ?? normalizeState(await readJson(STORE_FILE, null))
             const merged = mergeStates(current, incoming)
-            const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-            await fs.copyFile(targetStore, `${targetStore}.pre-switch-${stamp}`).catch(() => {})
+            await writeBackup(targetStore, 'pre-switch', path.join(target, 'backups'))
             await queueWrite(targetStore, merged.state)
             mergeNote = `，并与目标目录已有记忆合并（新增 ${merged.added}、更新 ${merged.updated}、删除 ${merged.removed}）`
           }
@@ -1618,8 +1786,7 @@ async function runOp(op, payload) {
       await saveConfig(DATA_DIR, { recycleDays: RECYCLE_KEEP_DAYS })
       if (expiring.length) {
         // 永久删除前先留一份整库快照，事后可以人工捞回
-        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
-        await fs.copyFile(STORE_FILE, `${STORE_FILE}.pre-purge-${stamp}`).catch(() => {})
+        await writeBackup(STORE_FILE, 'pre-purge')
         purgeExpiredDeleted(state, RECYCLE_KEEP_DAYS)
         await persist()
         return snapshot(state, sessionId, {

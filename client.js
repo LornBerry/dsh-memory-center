@@ -1182,6 +1182,8 @@ window.__ModuleLoader__.load({
       const [error, setError] = useState(null)
       const [info, setInfo] = useState(null)
       const [copied, setCopied] = useState(false)
+      const [backupBusy, setBackupBusy] = useState(false)
+      const [backupMsg, setBackupMsg] = useState(null)
 
       useEffect(() => {
         let alive = true
@@ -1245,6 +1247,26 @@ window.__ModuleLoader__.load({
           setTimeout(() => setCopied(false), 1500)
         } catch (cause) {
           setError(`复制失败：${cause && cause.message ? cause.message : String(cause)}`)
+        }
+      }
+
+      /* 备份：库里坏掉/切目录/清空回收站之前留的快照，散着会一直涨，这里给个出口 */
+      const backupStats = (info && info.backups) || { count: 0, bytes: 0 }
+      const backupKeep = (info && info.backupKeep) || 5
+      const backupSize = backupStats.bytes >= 1024 ? `${Math.round(backupStats.bytes / 1024)} KB` : `${backupStats.bytes || 0} B`
+
+      const runBackupOp = async (op, confirmText) => {
+        if (confirmText && typeof window !== 'undefined' && !window.confirm(confirmText)) return
+        setBackupBusy(true)
+        setBackupMsg(null)
+        try {
+          const result = await api(op)
+          setBackupMsg((result && result.message) || '已处理')
+          setInfo((prev) => ({ ...(prev || {}), backups: (result && result.backups) || { count: 0, bytes: 0 } }))
+        } catch (cause) {
+          setBackupMsg(`失败：${cause && cause.message ? cause.message : String(cause)}`)
+        } finally {
+          setBackupBusy(false)
         }
       }
 
@@ -1312,6 +1334,55 @@ window.__ModuleLoader__.load({
                 'div',
                 { className: 'dmc-card-hint', style: { lineHeight: '1.7' } },
                 `当前生效：${(info && info.dataDir) || dataDir || '未知'}`,
+              ),
+              h(
+                'div',
+                { className: 'dmc-card-hint', style: { lineHeight: '1.8', marginTop: '8px' } },
+                `备份：${backupStats.count} 个 · 共 ${backupSize}（库损坏、切目录、清空回收站前各留一份，每种只保留最近 ${backupKeep} 份）`,
+                h(
+                  'div',
+                  { className: 'dmc-actions', style: { marginTop: '6px' } },
+                  h(
+                    'button',
+                    { className: 'dmc-btn', disabled: backupBusy, onClick: () => runBackupOp('backups.prune') },
+                    '清理旧备份',
+                  ),
+                  h(
+                    'button',
+                    {
+                      className: 'dmc-btn danger',
+                      disabled: backupBusy,
+                      onClick: () =>
+                        runBackupOp(
+                          'backups.clear',
+                          '确定删除全部备份？它们是库损坏 / 切换目录 / 清空回收站之前的快照，删了就没法从这里恢复了。',
+                        ),
+                    },
+                    '全部删除',
+                  ),
+                  h(
+                    'button',
+                    {
+                      className: 'dmc-btn',
+                      disabled: backupBusy,
+                      onClick: () => {
+                        const folder = (info && info.backups && info.backups.dir) || ''
+                        if (!folder) return
+                        const copyText = (value) => {
+                          if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+                            return navigator.clipboard.writeText(value)
+                          }
+                          return Promise.reject(new Error('当前环境不支持剪贴板'))
+                        }
+                        copyText(folder)
+                          .then(() => setBackupMsg(`备份目录已复制：${folder}`))
+                          .catch(() => setBackupMsg(`备份目录：${folder}`))
+                      },
+                    },
+                    '复制备份目录',
+                  ),
+                ),
+                backupMsg ? h('div', { style: { marginTop: '4px', opacity: 0.85 } }, backupMsg) : null,
               ),
             ),
             h(
