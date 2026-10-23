@@ -1503,8 +1503,11 @@ window.__ModuleLoader__.load({
       const [dropKey, setDropKey] = useState(null)
       const [storageOpen, setStorageOpen] = useState((props && props.debugStorage) || false)
       const [syncOpen, setSyncOpen] = useState((props && props.debugSync) || false)
-      const [sortKey, setSortKey] = useState((props && props.debugSort) || 'manual')
-      const [sortDir, setSortDir] = useState('desc')
+      // 排序用一个下拉表达（值形如 updated-desc）：方向和字段写在一个选项里，
+      // 免得出现「按了箭头但当前是默认顺序，所以什么也没变」的死按钮。
+      const [sort, setSort] = useState((props && props.debugSort) || 'manual')
+      const sortKey = sort.split('-')[0]
+      const sortDir = sort.split('-')[1] || 'desc'
       const [view, setView] = useState((props && props.debugView) || 'card')
       const [confirmAsk, setConfirmAsk] = useState((props && props.debugConfirm) || null)
       const [tagging, setTagging] = useState(null)
@@ -1544,20 +1547,22 @@ window.__ModuleLoader__.load({
       })
 
       // 排序：默认按手动顺序（拖拽/顺序字段），也可以按时间找“刚加的那条”。
+      // 置顶条目无论正序倒序都排在最前，所以方向只作用在同一置顶分组内部。
       const sorted = (() => {
         const list = [...filtered]
+        const factor = sortDir === 'desc' ? -1 : 1
+        const byPinned = (a, b) => (a.pinned ? 0 : 1) - (b.pinned ? 0 : 1)
         if (sortKey === 'updated' || sortKey === 'created') {
           const field = sortKey === 'updated' ? 'updatedAt' : 'createdAt'
-          list.sort((a, b) => {
-            if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
-            return String(a[field] || '').localeCompare(String(b[field] || ''))
-          })
-          if (sortDir === 'desc') list.reverse()
+          list.sort(
+            (a, b) => byPinned(a, b) || factor * String(a[field] || '').localeCompare(String(b[field] || '')),
+          )
           return list
         }
         if (sortKey === 'title') {
-          list.sort((a, b) => String(a.title).localeCompare(String(b.title), 'zh-CN'))
-          if (sortDir === 'desc') list.reverse()
+          list.sort(
+            (a, b) => byPinned(a, b) || factor * String(a.title).localeCompare(String(b.title), 'zh-CN'),
+          )
           return list
         }
         return list
@@ -2076,24 +2081,17 @@ window.__ModuleLoader__.load({
                 'select',
                 {
                   className: 'dmc-sort',
-                  value: sortKey,
-                  title: '排序方式',
-                  onChange: (event) => setSortKey(event.target.value),
+                  value: sort,
+                  title: '排序方式（字段和方向都在这一个选项里）',
+                  onChange: (event) => setSort(event.target.value),
                 },
-                h('option', { value: 'manual' }, '默认顺序'),
-                h('option', { value: 'updated' }, '最近修改'),
-                h('option', { value: 'created' }, '最近创建'),
-                h('option', { value: 'title' }, '按标题'),
-              ),
-              h(
-                'button',
-                {
-                  className: 'dmc-icon-btn',
-                  style: { border: '1px solid rgba(127,127,127,.3)', borderRadius: '8px' },
-                  title: sortDir === 'desc' ? '当前从新到旧，点击切换' : '当前从旧到新，点击切换',
-                  onClick: () => setSortDir((value) => (value === 'desc' ? 'asc' : 'desc')),
-                },
-                sortDir === 'desc' ? '↓' : '↑',
+                h('option', { value: 'manual' }, '默认顺序（可拖拽）'),
+                h('option', { value: 'updated-desc' }, '最近修改 · 新→旧'),
+                h('option', { value: 'updated-asc' }, '最近修改 · 旧→新'),
+                h('option', { value: 'created-desc' }, '最近创建 · 新→旧'),
+                h('option', { value: 'created-asc' }, '最近创建 · 旧→新'),
+                h('option', { value: 'title-asc' }, '标题 · A→Z'),
+                h('option', { value: 'title-desc' }, '标题 · Z→A'),
               ),
               h(
                 'div',

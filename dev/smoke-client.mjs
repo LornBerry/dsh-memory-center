@@ -158,6 +158,19 @@ const snapshot = {
       createdAt: '2026-10-22T00:00:00.000Z',
       updatedAt: '2026-10-22T00:00:00.000Z',
     },
+    {
+      id: 'm-3',
+      title: '排序测试条目',
+      body: '用来验证时间倒序会真的换位置',
+      tags: ['测试'],
+      groupId: 'g-1',
+      enabled: true,
+      pinned: false,
+      status: 'active',
+      source: 'manual',
+      createdAt: '2026-10-22T05:00:00.000Z',
+      updatedAt: '2026-10-22T05:00:00.000Z',
+    },
   ],
   tags: ['约束'],
   stats: { groups: 2, items: 2, enabled: 2, pending: 1, pinned: 1, deleted: 1 },
@@ -304,7 +317,8 @@ const panelStates = [
   { label: ' storage', props: { debugStorage: true } },
   { label: ' sync', props: { debugSync: true } },
   { label: ' list-view', props: { debugView: 'list' } },
-  { label: ' sort-updated', props: { debugSort: 'updated' } },
+  { label: ' sort-updated', props: { debugSort: 'updated-desc' } },
+  { label: ' sort-updated-asc', props: { debugSort: 'updated-asc' } },
   { label: ' recycle', props: { debugFilter: '__deleted' } },
   {
     label: ' bulk-confirm',
@@ -359,6 +373,15 @@ for (const { options, component } of registrations) {
       if (options.name === 'main' && tag === ' pending') {
         if (!html.includes('全部转正')) fail.push('待确认页签缺少「全部转正」')
         if (!html.includes('存放到…并全部转正')) fail.push('待确认页签缺少批量存放下拉')
+      }
+      if (options.name === 'main' && (tag === ' sort-updated' || tag === ' sort-updated-asc')) {
+        const posPinned = html.indexOf('记忆数据放在 E 盘')
+        const posOld = html.indexOf('模型写入需确认')
+        const posNew = html.indexOf('排序测试条目')
+        if (posNew < 0 || posOld < 0) fail.push(`排序变体${tag} 没渲染出两条被测条目`)
+        else if (posPinned > posOld || posPinned > posNew) fail.push(`排序变体${tag}：置顶条目应始终在最前`)
+        else if (tag === ' sort-updated' && !(posNew < posOld)) fail.push('选「最近修改 · 新→旧」后，时间更新的条目应排在前面')
+        else if (tag === ' sort-updated-asc' && !(posOld < posNew)) fail.push('选「最近修改 · 旧→新」后，时间更旧的条目应排在前面')
       }
       if (options.name === 'main' && tag === ' menu-folder') {
         if (!html.includes('重命名')) fail.push('文件夹菜单缺少「重命名」')
