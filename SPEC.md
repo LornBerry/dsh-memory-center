@@ -154,6 +154,16 @@
 - **面板**：条目上黄色「旧版」徽标（悬停显示最新标题与日期）；左栏底部「同主题 N 组 · 旧版 M 条 → 点此选中」。
 - **缓存**：`topicsOf(state)` 按 `state.updatedAt + 条目数 + 各条 updatedAt` 缓存，同一请求里 `capacityOf` 与 `composeInjection` 不重复算。
 
+### F18 同步与运维的五处兜底（v1.12，用户从「建议」里挑的五项）
+- **同步冲突副本**：自动拉取按条目合并后、写回本地之前，先把本机 `store.json` 复制成 `<数据目录>/backups/conflict-<时间>-<git|webdav>.json`（只保留最近 5 份，不计入 corrupt/pre-switch/pre-purge 的配额），`syncInfo.conflicts` 记次数并在面板显示「已保留本机改动 N 次」。理由：条目级合并取新者赢，输掉的那一版不能只活在内存里。
+- **注入总开关（两级）**：`injection.set` 支持两种范围——
+  - 缺省 / `scope:'all'`：全局，写 `config.json` 的 `paused`，所有会话都不注入（`stats.paused=true`）；
+  - `scope:'sessions'` + `sessionIds`：只暂停这些会话，把原选择存进 `sessions[id].paused = { at, previous }` 并把该会话置为 `mode:'none'`；恢复时原样还原，原本「未决定」的会话则删除记录（回到会弹询问卡片）。
+  面板工具栏按钮在未暂停时先弹选择「暂停所有会话 / 只暂停当前会话」，按钮文案与左栏提示条跟随当前状态（全局 / 本会话）；`snapshot.pausedSessions` 列出仍在暂停的会话。
+- **待确认积压提醒**：左栏「待确认」条目数 ≥ 3 时，面板顶部出现提示条「有 N 条记忆等你转正」并带跳转；不阻断任何操作。
+- **删除记录回收**：墓碑默认保留 `DSH_MEMORY_TOMBSTONE_DAYS`（90）天；`deleted.prune` 清理早于 N 天的记录（`dryRun` 支持预览），回收站底栏显示 `recycle.tombstones` 条数并提供「清理旧记录」按钮（二次确认）。
+- **检索回归集**：`dev/search-regression.test.mjs`——22 条真实感记忆 + 22 个自然语言查询 + 4 个必然无结果的查询，断言目标条目进前 3、噪声查询零命中。改分词/BM25/同义词必须跑它；已知局限（中文二元组无法理解否定）写在测试文件注释里。
+
 ## 4. 验收标准
 
 | # | 验收标准 | 验证方式 |

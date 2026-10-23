@@ -90,6 +90,8 @@ function normalizeSessionDefault(raw) {
 }
 
 let SESSION_DEFAULT = { mode: 'ask', groupIds: [] }
+/** 全局暂停注入：只影响「要不要把记忆塞进上下文」，不改库里的任何数据。 */
+let INJECTION_PAUSED = false
 
 /**
  * 回收站保留天数：超过这个天数的软删除条目在下次加载时自动彻底删除（并写墓碑）。
@@ -108,6 +110,11 @@ const ENV_RECYCLE_DAYS = process.env.DSH_MEMORY_RECYCLE_DAYS
 const DEFAULT_RECYCLE_DAYS = 30
 // 可在面板里改（写 config.json 的 recycleDays），设了环境变量时以环境变量为准
 let RECYCLE_KEEP_DAYS = ENV_RECYCLE_DAYS ?? DEFAULT_RECYCLE_DAYS
+/**
+ * 墓碑（deleted 数组）保留天数：墓碑是「这条被删过」的同步凭据，留太短会让
+ * 另一台设备上的旧副本把条目推回来，留太长则文件只增不减。90 天是折中。
+ */
+const TOMBSTONE_KEEP_DAYS = 90
 
 /**
  * 检索用的同义组：内置一组中文常见说法，用户可在 config.json 的 synonyms 里追加自己的说法
@@ -179,10 +186,11 @@ function applyDataDir(dir) {
  *   corrupt-<时间>.json      库文件坏到修不好时，坏文件被挪进来
  *   pre-switch-<时间>.json   面板切数据目录、目标已有记忆时，切之前的备份
  *   pre-purge-<时间>.json    回收站到期清理前，清理之前的备份
- * 每种只保留最近 BACKUP_KEEP_PER_KIND 份；清理只碰 backups/ 里的这三类文件，
+ *   conflict-<时间>.json     同步时同一条被两台设备都改过，输掉的那一版
+ * 每种只保留最近 BACKUP_KEEP_PER_KIND 份；清理只碰 backups/ 里的这几类文件，
  * 永远不碰 store.json / config.json / sessions.json。
  */
-const BACKUP_KINDS = ['corrupt', 'pre-switch', 'pre-purge']
+const BACKUP_KINDS = ['corrupt', 'pre-switch', 'pre-purge', 'conflict']
 const BACKUP_KEEP_PER_KIND = 5
 const LEGACY_BACKUP_PREFIX = 'store.json.'
 
@@ -202,6 +210,19 @@ async function writeBackup(sourceFile, kind, dir = BACKUP_DIR) {
     await pruneBackups(BACKUP_KEEP_PER_KIND, dir)
   } catch {
     /* 备份失败不影响主流程 */
+  }
+}
+
+/** 把一段 JSON 直接写成备份（不是复制现有文件）。返回写出的文件名，失败返回空串。 */
+async function writeJsonBackup(kind, value, dir = BACKUP_DIR) {
+  try {
+    await fs.mkdir(dir, { recursive: true })
+    const file = backupPath(kind, newStamp(), dir)
+    await fs.writeFile(file, JSON.stringify(value, null, 2), 'utf8')
+    await pruneBackups(BACKUP_KEEP_PER_KIND, dir)
+    return path.basename(file)
+  } catch {
+    return ''
   }
 }
 
@@ -323,6 +344,8 @@ async function loadConfig() {
   if (ENV_MAX_CHARS === null && savedMax !== null) applyMaxChars(savedMax)
   // 新会话默认加载策略（不想每个会话都被问一次时用）。
   SESSION_DEFAULT = normalizeSessionDefault(config.sessionDefault)
+  // 全局暂停注入：临时不想让任何记忆进上下文时用，不影响库里的数据。
+  INJECTION_PAUSED = config.paused === true
   // 回收站保留天数：面板选过就用面板的，环境变量优先。
   if (ENV_RECYCLE_DAYS === null && config.recycleDays !== undefined && config.recycleDays !== null) {
     RECYCLE_KEEP_DAYS = parseRecycleDays(config.recycleDays)
@@ -538,9 +561,26 @@ function normalizeSessions(raw) {
       groupIds: Array.isArray(value.groupIds) ? value.groupIds.filter((id) => typeof id === 'string') : [],
       itemIds: Array.isArray(value.itemIds) ? value.itemIds.filter((id) => typeof id === 'string') : [],
       decidedAt: typeof value.decidedAt === 'string' ? value.decidedAt : nowIso(),
+      // 单会话暂停注入：记下暂停前的选择，恢复时原样还原
+      paused: normalizePaused(value.paused),
     }
   }
   return out
+}
+
+/** 单会话暂停的记录：{ at, previous }。previous 为 null 表示原本就是「未决定」。 */
+function normalizePaused(value) {
+  if (!value || typeof value !== 'object') return null
+  const at = typeof value.at === 'string' ? value.at : nowIso()
+  const previous = value.previous && typeof value.previous === 'object'
+    ? {
+        mode: ['none', 'all', 'custom'].includes(value.previous.mode) ? value.previous.mode : 'none',
+        groupIds: Array.isArray(value.previous.groupIds) ? value.previous.groupIds.filter((id) => typeof id === 'string') : [],
+        itemIds: Array.isArray(value.previous.itemIds) ? value.previous.itemIds.filter((id) => typeof id === 'string') : [],
+        decidedAt: typeof value.previous.decidedAt === 'string' ? value.previous.decidedAt : null,
+      }
+    : null
+  return { at, previous }
 }
 
 const SESSION_TTL_MS = 180 * 24 * 60 * 60 * 1000
@@ -733,18 +773,32 @@ function schedulePush() {
   if (typeof pushTimer.unref === 'function') pushTimer.unref()
 }
 
+/** 最近一次同步里「两边都改过、留了一边」的条目（给面板提示用）。 */
+let lastConflict = { at: '', count: 0, file: '' }
+
 /** 把远端 store 合并进本机，不触发再次推送（避免同步自己唤醒自己）。 */
 async function mergeRemote(remoteStore) {
   const current = store ?? normalizeState(await readJson(STORE_FILE, null))
-  const outcome = mergeStates(current, normalizeState(remoteStore))
-  if (!outcome.changed) return { changed: false, summary: '' }
+  const outcome = mergeStates(current, normalizeState(remoteStore), { since: sync.lastSyncAt || '' })
+  const conflicts = outcome.conflicts ?? []
+  if (conflicts.length) {
+    // 输掉的那一版先落盘，再继续合并：宁可多一个文件，也不让用户的修改无声消失。
+    const file = await writeJsonBackup('conflict', {
+      at: nowIso(),
+      reason: '两台设备都改过同一条记忆；本文件保存未被采用的那一版',
+      conflicts,
+    })
+    if (file) lastConflict = { at: nowIso(), count: conflicts.length, file }
+  }
+  if (!outcome.changed) return { changed: false, summary: '', conflicts }
   store = normalizeState(outcome.state)
   await persist({ skipPush: true })
   const parts = []
   if (outcome.added) parts.push(`新增 ${outcome.added}`)
   if (outcome.updated) parts.push(`更新 ${outcome.updated}`)
   if (outcome.removed) parts.push(`删除 ${outcome.removed}`)
-  return { changed: true, summary: `已合并远端（${parts.join('、') || '结构变化'}）` }
+  if (conflicts.length) parts.push(`${conflicts.length} 条冲突已留副本`)
+  return { changed: true, summary: `已合并远端（${parts.join('、') || '结构变化'}）`, conflicts }
 }
 
 let syncing = null
@@ -921,6 +975,7 @@ function composeInjection(state, sessionId) {
       stale: 0,
     },
   }
+  if (INJECTION_PAUSED) return { text: null, stats: { ...empty.stats, paused: true } }
   if (!selection || selection.mode === 'none') return empty
   const selected = selectedItemIds(state, selection)
   if (!selected.length) return empty
@@ -1061,6 +1116,7 @@ function sessionView(state, sessionId) {
     groupIds: selection?.groupIds ?? [],
     itemIds: selection?.itemIds ?? [],
     decidedAt: own?.decidedAt ?? null,
+    paused: Boolean(own?.paused),
     count: items.length,
     groupCount: new Set(items.map((item) => item.groupId ?? '')).size,
   }
@@ -1180,6 +1236,8 @@ function snapshot(state, sessionId, extra) {
       defaultDays: DEFAULT_RECYCLE_DAYS,
       count: recycledItems(state).length,
       chars: recycledItems(state).reduce((sum, item) => sum + costOf(item), 0),
+      tombstones: (state.deleted ?? []).length,
+      tombstoneDays: TOMBSTONE_KEEP_DAYS,
     },
     archived: archiveView(state),
     capacity: capacityOf(state),
@@ -1195,6 +1253,11 @@ function snapshot(state, sessionId, extra) {
     },
     session: sessionView(state, sessionId),
     sessionDefault: SESSION_DEFAULT,
+    paused: INJECTION_PAUSED,
+    pausedSessions: Object.entries(sessions)
+      .filter(([, selection]) => selection && selection.paused)
+      .map(([id, selection]) => ({ sessionId: id, at: selection.paused.at })),
+    conflict: lastConflict,
     topics: topicView(state),
     preview: injection.text,
     injection: injection.stats,
@@ -1496,6 +1559,81 @@ async function runOp(op, payload) {
               ? '新会话默认加载全部'
               : `新会话默认加载 ${next.groupIds.length} 个文件夹`
       return snapshot(state, sessionId, { message: `${label}（已保存，立即生效）` })
+    }
+
+    case 'injection.set': {
+      // 暂停注入：只影响注入，不动库里的数据，随时可恢复。
+      //   scope 缺省 / 'all'  → 全局：所有会话都不带记忆
+      //   scope 'sessions'    → 只暂停列出的会话（把它们的选择存进 paused，恢复时原样还原）
+      const scope = payload.scope === 'sessions' ? 'sessions' : 'all'
+      const paused = payload.paused === true
+
+      if (scope === 'sessions') {
+        const ids = Array.isArray(payload.sessionIds)
+          ? payload.sessionIds.filter((id) => typeof id === 'string' && id)
+          : sessionId
+            ? [sessionId]
+            : []
+        if (!ids.length) throw fail('请指定要暂停的会话')
+        let changed = 0
+        for (const id of ids) {
+          if (paused) {
+            const own = sessions[id]
+            if (own && own.paused) continue
+            const previous = own
+              ? { mode: own.mode, groupIds: own.groupIds, itemIds: own.itemIds, decidedAt: own.decidedAt }
+              : null
+            sessions[id] = {
+              mode: 'none',
+              groupIds: [],
+              itemIds: [],
+              decidedAt: nowIso(),
+              paused: { at: nowIso(), previous },
+            }
+            changed += 1
+          } else {
+            const own = sessions[id]
+            if (!own || !own.paused) continue
+            if (own.paused.previous) {
+              sessions[id] = { ...own.paused.previous, paused: null }
+            } else {
+              // 原本就是「未决定」：删掉记录，回到会弹询问卡片的状态
+              delete sessions[id]
+            }
+            changed += 1
+          }
+        }
+        await persistSessions()
+        const label = paused
+          ? `已暂停注入：${ids.length} 个会话不再带记忆（新会话不受影响）`
+          : `已恢复注入：${changed} 个会话回到原来的选择`
+        return snapshot(state, sessionId, { message: changed ? label : '这些会话的状态没有变化' })
+      }
+
+      INJECTION_PAUSED = paused
+      await saveConfig(DATA_DIR, { paused: INJECTION_PAUSED })
+      return snapshot(state, sessionId, {
+        message: INJECTION_PAUSED ? '已暂停注入：所有会话都不再带记忆' : '已恢复注入',
+      })
+    }
+
+    case 'deleted.prune': {
+      // 墓碑回收：只清「够老」的墓碑，避免另一台设备的旧副本把条目推回来。
+      const days = Number.isFinite(Number(payload.days)) && Number(payload.days) > 0 ? Number(payload.days) : TOMBSTONE_KEEP_DAYS
+      const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
+      const before = (state.deleted ?? []).length
+      const kept = (state.deleted ?? []).filter((entry) => {
+        const at = Date.parse(String(entry?.at ?? ''))
+        return Number.isNaN(at) || at >= cutoff
+      })
+      const removed = before - kept.length
+      if (!removed) {
+        return snapshot(state, sessionId, { message: `没有超过 ${days} 天的删除记录需要清理` })
+      }
+      state.deleted = kept
+      state.updatedAt = nowIso()
+      await persist()
+      return snapshot(state, sessionId, { message: `已清理 ${removed} 条 ${days} 天前的删除记录（还剩 ${kept.length} 条）` })
     }
 
     case 'config.set': {

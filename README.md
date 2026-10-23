@@ -124,6 +124,7 @@ node dev/release.mjs            # 自测 + 升版本 + 打包，打印 install_b
 
 - 开了之后：打开面板时自动拉取（可关），改动后 4 秒自动上传（可关），也可以随时点「立即同步」。
 - 冲突规则：**按条目**合并——同一条记忆两边都改，`updatedAt` 新的赢；删除会记墓碑，不会在另一台设备上「复活」。
+- 输掉的那一版不会凭空消失：每次自动拉取把本地覆盖掉之前，都会把本机的 `store.json` 复制成 `<数据目录>/backups/conflict-<时间>-git.json`（Git）或 `conflict-<时间>-webdav.json`（WebDAV），只保留最近 5 份。同步状态里会显示「已保留本机改动 N 次」，要捞就按时间找这个文件。
 - 大小：一条记忆几百字节，一万条也就几 MB；Git 侧只存增量，不会越存越满。
 - Git 侧的实现细节：数据目录下会多出 `.git-sync/repo`（影子仓库），`config.json` 和 `sessions.json` 不入库（前者含本机凭据，后者只对本机会话有意义）。
 - WebDAV 的账号密码存在本机 `config.json` 里（明文）；`.gitignore` 已经把 `config.json` 排除在 Git 之外，但走 WebDAV 时它就在本机文件里。
@@ -133,6 +134,7 @@ node dev/release.mjs            # 自测 + 升版本 + 打包，打印 install_b
 
 - **回收站**：删除只是软删除，条目从列表和注入里消失，但仍留在 `store.json`；左栏「回收站」里可以单条或批量**恢复**，也可以**彻底删除**或**清空回收站**。只有彻底删除才会写墓碑（跨设备同步时不会在另一台机器上复活）。回收站默认**保留 30 天**，过期的软删除条目在下次加载时自动彻底删除（同样写墓碑）；回收站底栏可以直接改保留天数（不自动清理 / 7 / 30 / 90 / 180 天），写进 `config.json` 的 `recycleDays`、改完立即生效，并用「占用约 X 字符」显示回收站体积；也可以用 `DSH_MEMORY_RECYCLE_DAYS` 固定天数（`0` = 永不自动清理，设了环境变量时面板里只读）。
   **改小天数会立刻永久删除**，所以下拉不是一点即生效：前端先带 `dryRun: true` 问后端「按新天数会清掉几条」，有命中就弹确认框写明条数与标题，确认后才真正执行；后端在删除前会把整库复制成 `<数据目录>/backups/pre-purge-<时间>.json`，事后仍可人工捞回。
+- **删除记录（墓碑）也会过期**：彻底删除会留一条「这条删过」的记录，用于跨设备同步时阻止旧副本复活。这些记录默认保留 90 天，回收站底栏会显示条数，并提供「清理旧记录」按钮（清理前二次确认）。急着腾空间可以提前清，但**还有设备很久没同步过时别清**——那台设备上的旧副本可能因此被推回来。天数可用 `DSH_MEMORY_TOMBSTONE_DAYS` 固定。
 - **二次确认**：批量删除、彻底删除、全部转正、清空回收站这类一次影响多条的动作，都会先弹窗写明「影响 N 条、能否撤销」，点错了按取消即可，不产生任何改动。
 - **底部操作栏**：勾选任意卡片后，屏幕底部浮出「已选 N 条 | 移动到… / 打标 / 停用 / 转正 / 加入本次会话 / 删除」，不用再回到顶部找按钮。
 - **打标**：批量添加标签时只往里加，不覆盖已有标签，也不会重复。
@@ -170,6 +172,7 @@ node dev/release.mjs            # 自测 + 升版本 + 打包，打印 install_b
 5. **模型写入需你确认**：模型调用 `memory_write` 写入的条目先落「待确认」；同一会话第 2 条起会自动放进以会话标题命名的文件夹（仍待确认）。点左栏「待确认」页签，顶部有「全部转正 / 存放到…并全部转正 / 全部删除」兜底，单条也可以右键「存放到文件夹」+「转正」。转正后才参与注入。
 6. **注入内容可见**：每次注入以一条消息出现在对话里（就是你现在看到的这段），面板里也能「预览注入」查看全文。
 7. **手动整理**：文件夹改名/上移下移/删除（条目移入未归类或一起删）、条目移动文件夹、置顶、停用、标签自由编辑、搜索、导出 JSON / Markdown。
+8. **临时不想让它带记忆**：面板工具栏（设置页也有一处）的「暂停注入」按一下会问你**暂停范围**——「暂停所有会话」或「只暂停当前会话」。暂停后记忆不再进入对话，库里数据一点不动；再按一下恢复，单会话暂停会原样还原它之前的选择（原本没选过的会话恢复后回到「会先问你」）。多个会话连着做别的事、又不想让记忆掺进来时用它，比逐个会话选「不加载」省事。
 
 ## 模型侧工具
 
@@ -236,6 +239,7 @@ node dev/release.mjs            # 自测 + 升版本 + 打包，打印 install_b
   node dev/encoding.test.mjs # 无 BOM、无乱码（提交前必跑）
   node dev/memory-write.test.mjs
   node dev/resilience.test.mjs
+  node dev/search-regression.test.mjs # 检索效果回归集：22 条真实记忆 + 26 个查询，改了分词/权重/同义词必须跑
   ```
 - 接口自测（端口换成你当前 DSH Web GUI 的端口）：
 
@@ -243,5 +247,5 @@ node dev/release.mjs            # 自测 + 升版本 + 打包，打印 install_b
   curl -X POST http://127.0.0.1:<port>/dsh-memory/api -H "content-type: application/json" -d '{"op":"state"}'
   ```
 
-  可用 op 见 `index.js` 的 `switch (op)`：`state` / `group.*` / `item.*` / `session.*` / `import.preview` / `import.apply` / `export` / `search` / `config.get` / `config.set` / `sync.get` / `sync.set` / `sync.now`。
+  可用 op 见 `index.js` 的 `switch (op)`：`state` / `group.*` / `item.*` / `session.*` / `session.default` / `budget.set` / `deleted.prune` / `import.preview` / `import.apply` / `export` / `search` / `config.get` / `config.set` / `sync.get` / `sync.set` / `sync.now` / `recycle.set` / `backups.list`。
 - 需求与验收标准：见 [SPEC.md](./SPEC.md)。

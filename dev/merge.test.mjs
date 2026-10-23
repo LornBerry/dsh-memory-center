@@ -126,4 +126,49 @@ it('远端为空（首次同步）时保持不变', () => {
   assert.equal(state.items.length, 1)
 })
 
+/* -------------------------------------------------- 冲突：输掉的那一版不能无声消失 */
+
+it('两边都改过同一条时，输掉的那一版回到 conflicts 里', () => {
+  const local = store([item('m1', '2026-01-02T00:00:00.000Z', { body: '本机改的' })])
+  const remote = store([item('m1', '2026-01-03T00:00:00.000Z', { body: '另一台改的' })])
+  const { state, conflicts } = mergeStates(local, remote)
+  assert.equal(conflicts.length, 1)
+  assert.equal(conflicts[0].id, 'm1')
+  assert.equal(conflicts[0].winner, 'remote')
+  assert.equal(conflicts[0].loser.body, '本机改的')
+  assert.equal(state.items[0].body, '另一台改的')
+})
+
+it('本机更新时冲突里保留远端那一版', () => {
+  const local = store([item('m1', '2026-01-05T00:00:00.000Z', { body: '本机新' })])
+  const remote = store([item('m1', '2026-01-03T00:00:00.000Z', { body: '远端旧' })])
+  const { conflicts } = mergeStates(local, remote)
+  assert.equal(conflicts.length, 1)
+  assert.equal(conflicts[0].winner, 'local')
+  assert.equal(conflicts[0].loser.body, '远端旧')
+})
+
+it('只有一边改过时不算冲突（传了上次同步时间）', () => {
+  const since = '2026-01-02T00:00:00.000Z'
+  const local = store([item('m1', '2026-01-05T00:00:00.000Z', { body: '本机刚改' })])
+  const remote = store([item('m1', '2026-01-01T00:00:00.000Z', { body: '远端很旧' })])
+  const { conflicts } = mergeStates(local, remote, { since })
+  assert.equal(conflicts.length, 0)
+})
+
+it('两步都改过就算冲突（本机与远端都晚于上次同步）', () => {
+  const since = '2026-01-02T00:00:00.000Z'
+  const local = store([item('m1', '2026-01-05T00:00:00.000Z', { body: 'A' })])
+  const remote = store([item('m1', '2026-01-04T00:00:00.000Z', { body: 'B' })])
+  const { conflicts } = mergeStates(local, remote, { since })
+  assert.equal(conflicts.length, 1)
+})
+
+it('内容相同但时间不同不算冲突', () => {
+  const local = store([item('m1', '2026-01-05T00:00:00.000Z', { body: '一样' })])
+  const remote = store([item('m1', '2026-01-04T00:00:00.000Z', { body: '一样' })])
+  const { conflicts } = mergeStates(local, remote)
+  assert.equal(conflicts.length, 0)
+})
+
 console.log(`\n${passed} 项通过`)

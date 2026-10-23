@@ -95,6 +95,8 @@ node dev/anchor-infer.test.mjs # 锚点初判规则：硬性/偏好/普通事实
 node dev/backups.test.mjs    # 备份生命周期：同种只留 5 份、老位置自动迁入、清理不误伤数据文件
 node dev/session-default.test.mjs # 新会话默认策略（ask/none/all/custom）与注入上限可调（budget.set maxChars）
 node dev/topic.test.mjs      # 同主题新旧标注：分组、旧版提示、检索一致、归档/停用不参与
+node dev/search-regression.test.mjs # 检索效果回归集（22 条记忆 × 26 个查询；改分词/权重/同义词必跑）
+node dev/pause.test.mjs      # 暂停注入：全局 / 单会话两种粒度，恢复要原样还原
 node dev/doctor.mjs --url http://127.0.0.1:<端口>   # 安装与运行状态自检
 ```
 

@@ -75,6 +75,9 @@ window.__ModuleLoader__.load({
         .dmc-count { font-size: 11px; opacity: .6; font-variant-numeric: tabular-nums; }
         .dmc-main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
         .dmc-toolbar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid rgba(127,127,127,.18); flex-wrap: wrap; }
+        .dmc-banner { margin: 6px 8px; padding: 6px 10px; border-radius: 8px; font-size: 12px; cursor: pointer; background: rgba(90,140,255,.14); border: 1px solid rgba(90,140,255,.35); }
+        .dmc-banner:hover { background: rgba(90,140,255,.22); }
+        .dmc-banner.is-warn { background: rgba(240,160,60,.16); border-color: rgba(240,160,60,.45); }
         .dmc-search { flex: 1 1 180px; min-width: 120px; padding: 5px 9px; border-radius: 8px; border: 1px solid rgba(127,127,127,.3); background: transparent; color: inherit; font-size: 13px; }
         .dmc-btn { padding: 4px 10px; border-radius: 8px; border: 1px solid rgba(127,127,127,.32); background: transparent; color: inherit; cursor: pointer; font-size: 12px; line-height: 1.5; white-space: nowrap; }
         .dmc-btn:hover { background: rgba(127,127,127,.14); }
@@ -500,6 +503,45 @@ window.__ModuleLoader__.load({
         },
         h('div', { style: { fontSize: '13px', lineHeight: '1.7' } }, message),
         detail ? h('div', { className: 'dmc-card-hint', style: { marginTop: '8px' } }, detail) : null,
+      )
+    }
+
+    function ChoiceDialog({ title, message, options, onClose }) {
+      const [busy, setBusy] = useState(false)
+      const pick = async (option) => {
+        setBusy(true)
+        try {
+          await option.onSelect()
+        } finally {
+          setBusy(false)
+          onClose()
+        }
+      }
+      return h(
+        Modal,
+        {
+          title: title || '请选择',
+          onClose,
+          footer: [h('button', { key: 'cancel', className: 'dmc-btn', onClick: onClose, disabled: busy }, '取消')],
+        },
+        message ? h('div', { style: { fontSize: '13px', lineHeight: '1.7' } }, message) : null,
+        h(
+          'div',
+          { className: 'dmc-actions', style: { marginTop: '10px', flexWrap: 'wrap' } },
+          options.map((option) =>
+            h(
+              'button',
+              {
+                key: option.label,
+                className: option.primary ? 'dmc-btn primary' : 'dmc-btn',
+                disabled: busy || option.disabled,
+                title: option.hint || '',
+                onClick: () => pick(option),
+              },
+              option.label,
+            ),
+          ),
+        ),
       )
     }
 
@@ -1662,6 +1704,8 @@ window.__ModuleLoader__.load({
       const data = state.data
       const embedded = !!(props && props.embedded)
       const panelClass = embedded ? 'dmc-panel is-embedded' : 'dmc-panel'
+      // 暂停注入有三种状态：全局暂停 / 本会话暂停 / 都没暂停
+      const sessionPaused = Boolean(data && data.session && data.session.paused)
       const [filter, setFilter] = useState((props && props.debugFilter) || '__all')
       const [query, setQuery] = useState((props && props.debugQuery) || '')
       // 服务端检索结果（同义词 + 相关度排序）：{ query, ids, snippets }
@@ -1674,6 +1718,7 @@ window.__ModuleLoader__.load({
       const [preview, setPreview] = useState(null)
       const [selected, setSelected] = useState((props && props.debugSelected) || [])
       const [menu, setMenu] = useState((props && props.debugMenu) || null)
+      const [choice, setChoice] = useState(null)
       const menuRef = useRef(null)
       const [menuSpot, setMenuSpot] = useState(null)
       const [dragIds, setDragIds] = useState([])
@@ -2255,6 +2300,44 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'dmc-nav-list' },
+            data.paused
+              ? h(
+                  'div',
+                  { className: 'dmc-banner is-warn', title: '所有会话都不再带记忆，库里的数据没动', onClick: () => run('injection.set', { paused: false }) },
+                  '注入已暂停 · 点此恢复',
+                )
+              : sessionPaused
+                ? h(
+                    'div',
+                    {
+                      className: 'dmc-banner is-warn',
+                      title: '只有这个会话暂停了注入，新会话照常带记忆',
+                      onClick: () => run('injection.set', { paused: false, scope: 'sessions', sessionIds: [activeSessionId] }),
+                    },
+                    '本会话已暂停注入 · 点此恢复',
+                  )
+                : null,
+            pendingCount > 0
+              ? h(
+                  'div',
+                  {
+                    className: 'dmc-banner',
+                    title: '模型写入的记忆要先转正才参与注入',
+                    onClick: () => {
+                      setFilter('__pending')
+                      clearSelect()
+                    },
+                  },
+                  `待确认 ${pendingCount} 条 · 点此处理`,
+                )
+              : null,
+            data.conflict && data.conflict.count
+              ? h(
+                  'div',
+                  { className: 'dmc-banner is-warn', title: `副本：backups/${data.conflict.file || ''}` },
+                  `同步冲突 ${data.conflict.count} 条已留副本`,
+                )
+              : null,
             navRow('__all', '全部记忆', data.stats.items),
             navRow('__pending', '待确认', pendingCount),
             navRow('__ungrouped', '未归类', data.items.filter((item) => !item.groupId && item.status === 'active').length, null),
@@ -2388,6 +2471,46 @@ window.__ModuleLoader__.load({
                 onClick: () => setSyncOpen(true),
               },
               data.sync && data.sync.mode && data.sync.mode !== 'off' ? '云端同步 · 已开' : '云端同步',
+            ),
+            h(
+              'button',
+              {
+                className: data.paused ? 'dmc-btn danger' : sessionPaused ? 'dmc-btn' : 'dmc-btn',
+                title: data.paused
+                  ? '现在所有会话都不带记忆；点一下恢复'
+                  : sessionPaused
+                    ? '本会话已暂停注入；点一下恢复本会话'
+                    : '临时不让记忆进上下文（不动库里的数据），可以只暂停当前会话',
+                onClick: () => {
+                  if (data.paused) {
+                    run('injection.set', { paused: false })
+                    return
+                  }
+                  if (sessionPaused) {
+                    run('injection.set', { paused: false, scope: 'sessions', sessionIds: [activeSessionId] })
+                    return
+                  }
+                  setChoice({
+                    title: '暂停注入',
+                    message: '暂停后记忆不再进入对话，库里的数据一点不动，随时可以恢复。',
+                    options: [
+                      {
+                        label: '暂停所有会话',
+                        primary: true,
+                        onSelect: () => run('injection.set', { paused: true, scope: 'all' }),
+                      },
+                      {
+                        label: '只暂停当前会话',
+                        disabled: !activeSessionId,
+                        hint: activeSessionId ? '只影响这一个会话，新会话照常' : '当前没有活动会话',
+                        onSelect: () =>
+                          run('injection.set', { paused: true, scope: 'sessions', sessionIds: [activeSessionId] }),
+                      },
+                    ],
+                  })
+                },
+              },
+              data.paused ? '注入已暂停 · 恢复' : sessionPaused ? '本会话已暂停 · 恢复' : '暂停注入',
             ),
             embedded
               ? null
@@ -2641,6 +2764,23 @@ window.__ModuleLoader__.load({
                   },
                   '清空回收站',
                 ),
+                data.recycle && data.recycle.tombstones
+                  ? h(
+                      'button',
+                      {
+                        className: 'dmc-btn',
+                        title: '删除记录是跨设备同步用的凭据；清早了可能让另一台设备的旧副本把条目推回来',
+                        onClick: () =>
+                          setConfirmAsk({
+                            title: `清理 ${data.recycle.tombstoneDays} 天前的删除记录？`,
+                            message: `现在有 ${data.recycle.tombstones} 条删除记录。只清理老的，不会影响正常条目；但如果你还有设备很久没同步过，那台设备上的旧副本可能因此复活。`,
+                            confirmLabel: '清理旧记录',
+                            onConfirm: () => run('deleted.prune', { days: data.recycle.tombstoneDays }),
+                          }),
+                      },
+                      `清理旧记录（${data.recycle.tombstones}）`,
+                    )
+                  : null,
                 h('button', { className: 'dmc-btn', onClick: clearSelect }, '取消选择'),
               )
             : archiveMode && archivedItems.length
@@ -2883,6 +3023,14 @@ window.__ModuleLoader__.load({
         importing ? h(ImportDialog, { onClose: () => setImporting(false) }) : null,
         exporting ? h(ExportDialog, { data, onClose: () => setExporting(false) }) : null,
         preview !== null ? h(PreviewDialog, { text: preview, onClose: () => setPreview(null) }) : null,
+        choice
+          ? h(ChoiceDialog, {
+              title: choice.title,
+              message: choice.message,
+              options: choice.options,
+              onClose: () => setChoice(null),
+            })
+          : null,
         groupDialog
           ? h(GroupDialog, {
               group: groupDialog.group || null,
