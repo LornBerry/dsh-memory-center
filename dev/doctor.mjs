@@ -139,6 +139,7 @@ if (existsSync(INSTALLED)) {
 /* ---------------------------------------------------------------- 4. 接口 */
 
 console.log('\n== 运行时接口 ==')
+let apiDataDir = null
 if (!BASE) {
   warn('未提供 Web 地址', '', '加 --url http://127.0.0.1:<端口>，或设置环境变量 DSH_WEB_URL')
 } else {
@@ -156,6 +157,7 @@ if (!BASE) {
     check(`${api} 可达`, `HTTP ${cfg.status}`, () => cfg.status === 200 && cfg.body && cfg.body.ok === true, '宿主没加载插件：重启 DSH，或检查 profile/cordis.patch.yml')
     if (cfg.body && cfg.body.ok) {
       ok('数据目录', cfg.body.dataDir)
+      apiDataDir = cfg.body.dataDir
       ok('默认目录', cfg.body.defaultDir)
       const writable = cfg.body.writable
       if (writable === undefined) warn('writable 未上报', '', '')
@@ -178,7 +180,7 @@ if (!BASE) {
 
 console.log('\n== 本地数据 ==')
 // 复用接口报回来的真实数据目录；接口不通时才退回本地探测（顺序见 lib/paths.js）
-const dataDir = (cfg && cfg.body && cfg.body.dataDir) || process.env.DSH_MEMORY_DIR || (await pickDataDir())
+const dataDir = apiDataDir || process.env.DSH_MEMORY_DIR || (await pickDataDir())
 const storeFile = path.join(dataDir, 'store.json')
 if (!existsSync(storeFile)) {
   warn('store.json 不存在', storeFile, '首次打开面板时会自动创建；路径不同就查 config.get 的 dataDir')
