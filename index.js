@@ -25,7 +25,23 @@ export const inject = ['webServer']
 
 const ROUTE_PREFIX = '/dsh-memory'
 const CONFIG_ENV = process.env.DSH_MEMORY_CONFIG || ''
-const MAX_INJECT_CHARS = Number(process.env.DSH_MEMORY_MAX_CHARS || 12000)
+
+/**
+ * 注入上限（字符）：超过就截断，且「上限 × 压缩阈值」是开始压缩的那条线。
+ * 优先级：环境变量 DSH_MEMORY_MAX_CHARS > 面板里调过的值（config.json 的 maxChars）> 12000。
+ * 注意是字符不是 token：不同语种信息密度不同，面板里也标注了这一点。
+ */
+function parseMaxChars(raw) {
+  const value = Number(raw)
+  if (!Number.isFinite(value)) return null
+  const rounded = Math.round(value)
+  if (rounded < 1000 || rounded > 200000) return null
+  return rounded
+}
+
+const DEFAULT_MAX_CHARS = 12000
+const ENV_MAX_CHARS = parseMaxChars(process.env.DSH_MEMORY_MAX_CHARS)
+let MAX_INJECT_CHARS = ENV_MAX_CHARS ?? DEFAULT_MAX_CHARS
 
 /**
  * 压缩阈值：记忆总量超过「上限 × 该比例」时，注入开始压缩（超出部分只给标题）。
@@ -49,6 +65,30 @@ function applyCompressRatio(ratio) {
   COMPRESS_RATIO = ratio
   SOFT_INJECT_CHARS = Math.max(1000, Math.floor(MAX_INJECT_CHARS * ratio))
 }
+
+function applyMaxChars(chars) {
+  MAX_INJECT_CHARS = chars
+  SOFT_INJECT_CHARS = Math.max(1000, Math.floor(MAX_INJECT_CHARS * COMPRESS_RATIO))
+}
+
+/**
+ * 新会话的默认加载策略：用户不想每个会话都被问一次。
+ * mode=ask 时保持原行为（弹卡片让你选）；none/all 直接生效；custom 用 groupIds 指定文件夹。
+ * 存 config.json 的 sessionDefault（可以进 profile.json 同步，见 lib/sync.js）。
+ */
+const SESSION_DEFAULT_MODES = ['ask', 'none', 'all', 'custom']
+
+function normalizeSessionDefault(raw) {
+  const source = raw && typeof raw === 'object' ? raw : {}
+  const mode = SESSION_DEFAULT_MODES.includes(source.mode) ? source.mode : 'ask'
+  const groupIds = Array.isArray(source.groupIds)
+    ? source.groupIds.filter((id) => typeof id === 'string' && id)
+    : []
+  if (mode === 'custom' && !groupIds.length) return { mode: 'ask', groupIds: [] }
+  return { mode, groupIds: mode === 'custom' ? groupIds : [] }
+}
+
+let SESSION_DEFAULT = { mode: 'ask', groupIds: [] }
 
 /**
  * 回收站保留天数：超过这个天数的软删除条目在下次加载时自动彻底删除（并写墓碑）。
@@ -277,6 +317,11 @@ async function loadConfig() {
   // 面板里拖过的压缩阈值；环境变量优先，设了环境变量就不读盘上的值。
   const savedRatio = parseRatio(config.injectRatio)
   if (ENV_COMPRESS_RATIO === null && savedRatio !== null) applyCompressRatio(savedRatio)
+  // 注入上限：环境变量优先，否则读面板里调过的值。
+  const savedMax = parseMaxChars(config.maxChars)
+  if (ENV_MAX_CHARS === null && savedMax !== null) applyMaxChars(savedMax)
+  // 新会话默认加载策略（不想每个会话都被问一次时用）。
+  SESSION_DEFAULT = normalizeSessionDefault(config.sessionDefault)
   // 回收站保留天数：面板选过就用面板的，环境变量优先。
   if (ENV_RECYCLE_DAYS === null && config.recycleDays !== undefined && config.recycleDays !== null) {
     RECYCLE_KEEP_DAYS = parseRecycleDays(config.recycleDays)
@@ -822,7 +867,7 @@ function summaryLine(stats) {
  * 这样既不会把一条记忆切成两半，也不会让模型误以为记忆只有这么点。
  */
 function composeInjection(state, sessionId) {
-  const selection = sessions[sessionId]
+  const { selection } = effectiveSelection(sessionId)
   const empty = {
     text: null,
     stats: {
@@ -931,18 +976,35 @@ function buildInjection(state, sessionId) {
   return composeInjection(state, sessionId).text
 }
 
+function effectiveSelection(sessionId) {
+  const own = sessionId ? sessions[sessionId] : undefined
+  if (own) return { selection: own, inherited: false }
+  if (SESSION_DEFAULT.mode === 'ask') return { selection: undefined, inherited: false }
+  return {
+    selection: {
+      mode: SESSION_DEFAULT.mode,
+      groupIds: SESSION_DEFAULT.groupIds,
+      itemIds: [],
+      decidedAt: null,
+    },
+    inherited: true,
+  }
+}
+
 function sessionView(state, sessionId) {
-  const selection = sessionId ? sessions[sessionId] : undefined
-  const decided = Boolean(selection)
+  const own = sessionId ? sessions[sessionId] : undefined
+  const { selection, inherited } = effectiveSelection(sessionId)
+  const decided = Boolean(own) || inherited
   const mode = selection?.mode ?? 'none'
   const items = selection ? sortItems(selectedItemIds(state, selection)) : []
   return {
     sessionId: sessionId || null,
     decided,
+    inherited,
     mode,
     groupIds: selection?.groupIds ?? [],
     itemIds: selection?.itemIds ?? [],
-    decidedAt: selection?.decidedAt ?? null,
+    decidedAt: own?.decidedAt ?? null,
     count: items.length,
     groupCount: new Set(items.map((item) => item.groupId ?? '')).size,
   }
@@ -1074,6 +1136,7 @@ function snapshot(state, sessionId, extra) {
       archived: archivedItems(state).length,
     },
     session: sessionView(state, sessionId),
+    sessionDefault: SESSION_DEFAULT,
     preview: injection.text,
     injection: injection.stats,
     updatedAt: state.updatedAt,
@@ -1284,6 +1347,8 @@ async function runOp(op, payload) {
         softLimit: SOFT_INJECT_CHARS,
         maxChars: MAX_INJECT_CHARS,
         ratioLocked: ENV_COMPRESS_RATIO !== null,
+        maxCharsLocked: ENV_MAX_CHARS !== null,
+        sessionDefault: SESSION_DEFAULT,
         backups: await backupInfo(),
         backupKeep: BACKUP_KEEP_PER_KIND,
       }
@@ -1324,16 +1389,54 @@ async function runOp(op, payload) {
     }
 
     case 'budget.set': {
-      if (ENV_COMPRESS_RATIO !== null) {
-        throw fail('压缩阈值已被环境变量 DSH_MEMORY_COMPRESS_RATIO 固定，请先去掉该变量再在面板里调')
+      const wantsRatio = payload.ratio !== undefined
+      const wantsMax = payload.maxChars !== undefined
+      if (!wantsRatio && !wantsMax) throw fail('要么给 ratio（0.1–1），要么给 maxChars（1000–200000）')
+      const patch = {}
+      let message = ''
+      if (wantsRatio) {
+        if (ENV_COMPRESS_RATIO !== null) {
+          throw fail('压缩阈值已被环境变量 DSH_MEMORY_COMPRESS_RATIO 固定，请先去掉该变量再在面板里调')
+        }
+        const ratio = parseRatio(payload.ratio)
+        if (ratio === null) throw fail('压缩阈值要在 0.1–1 之间，例如 0.8 表示“用到上限的 80% 就开始压缩”')
+        applyCompressRatio(ratio)
+        patch.injectRatio = ratio
+        message = `压缩阈值已设为 ${Math.round(ratio * 100)}%（压缩线 ${SOFT_INJECT_CHARS} 字符）`
       }
-      const ratio = parseRatio(payload.ratio)
-      if (ratio === null) throw fail('压缩阈值要在 0.1–1 之间，例如 0.8 表示“用到上限的 80% 就开始压缩”')
-      applyCompressRatio(ratio)
-      await saveConfig(DATA_DIR, { injectRatio: ratio })
-      return snapshot(state, sessionId, {
-        message: `压缩阈值已设为 ${Math.round(ratio * 100)}%（压缩线 ${SOFT_INJECT_CHARS} 字符）`,
-      })
+      if (wantsMax) {
+        if (ENV_MAX_CHARS !== null) {
+          throw fail('注入上限已被环境变量 DSH_MEMORY_MAX_CHARS 固定，请先去掉该变量再在面板里调')
+        }
+        const chars = parseMaxChars(payload.maxChars)
+        if (chars === null) throw fail('注入上限要在 1000–200000 字符之间')
+        applyMaxChars(chars)
+        patch.maxChars = chars
+        message = `${message ? `${message}；` : ''}注入上限已设为 ${chars} 字符（压缩线 ${SOFT_INJECT_CHARS} 字符）`
+      }
+      await saveConfig(DATA_DIR, patch)
+      return snapshot(state, sessionId, { message })
+    }
+
+    case 'session.default': {
+      // 新会话默认加载策略：避免每开一个会话就被问一次
+      const next = normalizeSessionDefault({ mode: payload.mode, groupIds: payload.groupIds })
+      if (String(payload.mode || '') === 'custom' && !next.groupIds.length) {
+        throw fail('默认「指定文件夹」时至少要选一个文件夹')
+      }
+      const unknown = next.groupIds.filter((id) => !state.groups.some((group) => group.id === id))
+      if (unknown.length) throw fail(`文件夹不存在：${unknown.join('、')}`)
+      SESSION_DEFAULT = next
+      await saveConfig(DATA_DIR, { sessionDefault: next })
+      const label =
+        next.mode === 'ask'
+          ? '每次新会话都问你'
+          : next.mode === 'none'
+            ? '新会话默认不加载'
+            : next.mode === 'all'
+              ? '新会话默认加载全部'
+              : `新会话默认加载 ${next.groupIds.length} 个文件夹`
+      return snapshot(state, sessionId, { message: `${label}（已保存，立即生效）` })
     }
 
     case 'config.set': {

@@ -501,7 +501,7 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function CapacityDialog({ capacity, injection, onClose, onArchiveFolder, onSetRatio, onFocusItem, onArchiveIds }) {
+    function CapacityDialog({ capacity, injection, onClose, onArchiveFolder, onSetRatio, onSetLimit, onFocusItem, onArchiveIds }) {
       const cap = capacity || {}
       const folders = (cap.folders || []).slice().sort((a, b) => b.chars - a.chars)
       const longest = cap.longest || []
@@ -510,8 +510,11 @@ window.__ModuleLoader__.load({
       const savedThreshold = Math.round((cap.threshold || 0.8) * 100)
       const thresholdPct = savedThreshold
       const [draft, setDraft] = useState(savedThreshold)
+      const savedLimit = Math.round(cap.limit || 12000)
+      const [limitDraft, setLimitDraft] = useState(savedLimit)
       const draftLimit = Math.round(((cap.limit || 0) * draft) / 100)
       const ratioLocked = Boolean(cap.ratioLocked)
+      const limitLocked = Boolean(cap.maxCharsLocked)
       const rows = [
         h(
           'div',
@@ -533,6 +536,52 @@ window.__ModuleLoader__.load({
           { key: 'ratio', className: 'dmc-card-hint', style: { marginBottom: '10px' } },
           `全部启用记忆共 ${formatK(cap.chars || 0)} 字符（${cap.items || 0} 条），是压缩线的 ${ratio}%。`,
           cap.over ? ' 已超过压缩线：超出部分只给标题，需要在提问里用到就用 memory_search 取。' : '',
+        ),
+        h(
+          'div',
+          { key: 'limit', className: 'dmc-ratio' },
+          h(
+            'div',
+            { className: 'dmc-card-hint' },
+            limitLocked
+              ? '注入上限被环境变量 DSH_MEMORY_MAX_CHARS 固定，面板里不能改。'
+              : `注入上限：一次最多带 ${formatK(limitDraft)} 字符进对话（比这个长就截断）。字符不等于 token，中文和英文同等字符数的信息量不一样，这里只是粗略估算。`,
+          ),
+          h('input', {
+            className: 'dmc-range',
+            type: 'range',
+            min: 4000,
+            max: 50000,
+            step: 1000,
+            value: limitDraft,
+            disabled: limitLocked,
+            'aria-label': '注入上限',
+            onChange: (event) => setLimitDraft(Number(event.target.value)),
+          }),
+          h(
+            'div',
+            { className: 'dmc-btn-row' },
+            h(
+              'button',
+              {
+                className: 'dmc-btn primary',
+                type: 'button',
+                disabled: limitLocked || limitDraft === savedLimit,
+                onClick: () => onSetLimit && onSetLimit(limitDraft),
+              },
+              limitDraft === savedLimit ? '已生效' : `应用 ${formatK(limitDraft)}`,
+            ),
+            h(
+              'button',
+              {
+                className: 'dmc-btn',
+                type: 'button',
+                disabled: limitLocked || savedLimit === 12000,
+                onClick: () => onSetLimit && onSetLimit(12000),
+              },
+              '恢复 12000',
+            ),
+          ),
         ),
         h(
           'div',
@@ -2345,6 +2394,36 @@ window.__ModuleLoader__.load({
             : h('div', { className: 'dmc-toolbar' }, h('span', { className: 'dmc-card-hint' }, '先在对话里打开一个会话，才能决定本会话加载哪些记忆。')),
           h(
             'div',
+            { className: 'dmc-toolbar', style: { marginTop: '-6px' } },
+            h('span', { className: 'dmc-card-hint' }, '新会话默认：'),
+            h(
+              'select',
+              {
+                className: 'dmc-select-mini',
+                value: (data.sessionDefault && data.sessionDefault.mode) || 'ask',
+                onChange: async (event) => {
+                  const mode = event.target.value
+                  const body = { mode }
+                  if (mode === 'custom') {
+                    const ids = (data.session && data.session.groupIds) || []
+                    if (!ids.length) {
+                      setError('先在面板里对某个文件夹点「加入本会话」，再用这个选项把当前选择存成默认')
+                      return
+                    }
+                    body.groupIds = ids
+                  }
+                  await run('session.default', body)
+                },
+              },
+              h('option', { value: 'ask' }, '每次都问'),
+              h('option', { value: 'none' }, '不加载'),
+              h('option', { value: 'all' }, '全部加载'),
+              h('option', { value: 'custom' }, '当前会话选的文件夹'),
+            ),
+            h('span', { className: 'dmc-card-hint' }, '设成「每次都问」以外的值后，新会话不再弹询问卡片。'),
+          ),
+          h(
+            'div',
             { className: 'dmc-crumbs' },
             h(
               'button',
@@ -2700,6 +2779,7 @@ window.__ModuleLoader__.load({
               injection: data.injection,
               onClose: () => setCapacityOpen(false),
               onSetRatio: (value) => run('budget.set', { ratio: value }),
+              onSetLimit: (value) => run('budget.set', { maxChars: value }),
               onArchiveFolder: () => {
                 setCapacityOpen(false)
                 setFilter('__archived')
@@ -3138,6 +3218,21 @@ window.__ModuleLoader__.load({
                 { className: 'dmc-actions', style: { marginTop: '8px' } },
                 h('button', { className: 'dmc-btn', onClick: () => setImporting(true) }, '导入记忆…'),
                 h('button', { className: 'dmc-btn', onClick: () => setPreview((data && data.preview) || '') }, '预览注入'),
+                h(
+                  'button',
+                  {
+                    className: 'dmc-btn',
+                    title: '把「本会话的选择方式」存成新会话的默认，之后新会话不再问',
+                    onClick: async () => {
+                      const mode = (session && session.mode) || 'none'
+                      const body = { mode }
+                      if (mode === 'custom') body.groupIds = (session && session.groupIds) || []
+                      await run('session.default', body)
+                      if (sessionId) await refresh(sessionId)
+                    },
+                  },
+                  '设为新会话默认',
+                ),
                 h('button', { className: 'dmc-btn', onClick: () => run('session.reset', { sessionId }) }, '清除本会话选择'),
               ),
             )

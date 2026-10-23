@@ -138,6 +138,13 @@
 - **一致性**：面板搜索框、`memory_search`、写入前查重共用同一实现（`lib/retrieval.js`）。
 - **作用域**：默认排除回收站、已归档、已停用条目；`includeArchived` 可显式包含归档。
 
+### F16 新会话默认与预算旋钮（v1.10，用户追加需求：别每次都问、上限要能调）
+- **新会话默认加载策略** `sessionDefault`：`ask`（默认，每个新会话弹卡片问一次）/ `none` / `all` / `custom`（指定 `groupIds`）。写在 `config.json`，面板工具栏下拉与 chip 弹层「设为新会话默认」都能改。
+- **优先级**：单个会话自己的选择（`sessions.json`）永远压过 `sessionDefault`；清除本会话选择后回落到默认。设为非 `ask` 时不再弹询问卡片，`sessionView.decided` 由继承算作已决定（`inherited: true`）。
+- **注入上限可调**：`budget.set { maxChars }` 改硬上限（1000–200000），容量弹窗拉条 4000–50000、步进 1000；改完立即重算压缩线并写 `config.json` 的 `maxChars`。`budget.set` 同一次可只传 `ratio`、只传 `maxChars`，或两个都传。
+- **环境变量仍最优先**：`DSH_MEMORY_MAX_CHARS` / `DSH_MEMORY_COMPRESS_RATIO` 任一存在时，对应拉条只读（`maxCharsLocked` / `ratioLocked`）。
+- **口径说明**：上限按字符算，不是 token；中文与英文同等字符数信息量不同，面板文案里写明了这一点。
+
 ## 4. 验收标准
 
 | # | 验收标准 | 验证方式 |
@@ -169,6 +176,8 @@
 | AC25 | 归档的条目不参与注入、搜索与计数，可在「归档」页批量还原；合并后原条目全部转入归档并记录 `mergedInto` | `node dev/governance.test.mjs`（如存在）+ 手动 |
 | AC26 | 回收站保留天数可在面板底栏改动（写入 `config.json` 的 `recycleDays`、立即生效）、显示回收站占用字符数；越界值被拒；设了 `DSH_MEMORY_RECYCLE_DAYS` 时下拉只读；改小天数导致待清理时为 `dryRun` 预览 + 二次确认，正式清理前写 `<数据目录>/backups/pre-purge-<时间>.json` 整库备份 | `node dev/recycle.test.mjs` |
 | AC27 | 三类自动备份（`corrupt` / `pre-switch` / `pre-purge`）统一落在 `<数据目录>/backups/`，每种只保留最近 5 份；老版本散在数据目录根上的 `store.json.corrupt-*` 在下次加载时自动迁入；`backups.prune` / `backups.clear` 只删这三类文件，不碰 `store.json` / `sessions.json` / `config.json` | `node dev/backups.test.mjs` |
+| AC28 | `DSH_MEMORY_MAX_CHARS` 可在容量弹窗里用拉条改（4000–50000，步进 1000），应用后注入上限与压缩线立即重算并写入 `config.json` 的 `maxChars`，刷新/重启后仍生效；设了该环境变量时拉条只读并说明原因；越界值被拒 | `node dev/session-default.test.mjs` + 手动 |
+| AC29 | 面板工具栏的「新会话默认」可选「每次都问 / 不加载 / 全部加载 / 当前会话选的文件夹」，写入 `config.json` 的 `sessionDefault`；设成非 `ask` 后新会话不再弹询问卡片且按默认注入，单个会话自己的选择覆盖默认，「清除本会话选择」后退回默认 | `node dev/session-default.test.mjs` |
 
 ## 5. 非目标（v1 不做）
 
