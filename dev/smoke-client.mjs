@@ -343,6 +343,13 @@ const panelStatesFor = (name) => {
       { label: ' picking', props: { debugPicking: true } },
     ]
   }
+  // 输入框左侧 chip：打开弹层（只能按文件夹）与「按条选…」弹层
+  if (name === 'conversation.input.left') {
+    return [
+      { label: '', props: {} },
+      { label: ' sheet', props: { debugSheet: true } },
+    ]
+  }
   return [{ label: '', props: {} }]
 }
 

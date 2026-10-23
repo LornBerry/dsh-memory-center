@@ -2928,6 +2928,7 @@ window.__ModuleLoader__.load({
       const sessionId = props.sessionId
       const data = state.data
       const [open, setOpen] = useState(false)
+      const [sheet, setSheet] = useState((props && props.debugSheet) || false)
       const [importing, setImporting] = useState(false)
       const [preview, setPreview] = useState(null)
       const [anchor, setAnchor] = useState(null)
@@ -3017,9 +3018,20 @@ window.__ModuleLoader__.load({
                 { className: 'dmc-actions' },
                 h('button', { className: 'dmc-btn', onClick: () => choose('none') }, '不加载'),
                 h('button', { className: 'dmc-btn', onClick: () => choose('all') }, '全部加载'),
+                h(
+                  'button',
+                  {
+                    className: 'dmc-btn primary',
+                    onClick: () => {
+                      setOpen(false)
+                      setSheet(true)
+                    },
+                  },
+                  '按条选…',
+                ),
                 h('button', { className: 'dmc-btn', onClick: () => openPanel(PANEL_ID) }, '面板…'),
               ),
-              h('div', { className: 'dmc-card-hint', style: { marginTop: '8px' } }, '点文件夹名 = 整个文件夹加入本会话（下一轮生效）'),
+              h('div', { className: 'dmc-card-hint', style: { marginTop: '8px' } }, '点文件夹名 = 整个文件夹加入本会话；想只挑几条就点上面「按条选…」（都是下一轮生效）'),
               ...data.groups.map((group) => {
                 const on = session.groupIds && session.groupIds.includes(group.id)
                 const count = (data.items || []).filter(
@@ -3071,6 +3083,14 @@ window.__ModuleLoader__.load({
             })
           : null,
         preview !== null ? h(PreviewDialog, { text: preview, onClose: () => setPreview(null) }) : null,
+        sheet
+          ? h(FolderPicker, {
+              onClose: () => {
+                setSheet(false)
+                if (sessionId) refresh(sessionId)
+              },
+            })
+          : null,
       )
     }
 
