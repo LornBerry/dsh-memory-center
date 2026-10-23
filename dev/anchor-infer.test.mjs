@@ -95,6 +95,33 @@ expect(
   '密码 + 不要 应判 full',
 )
 expect(
+  '英文安全词 + 否定也算硬性',
+  inferAnchor({ title: '凭据处理', body: '不要把 API key 写进仓库。' }).mode,
+  'full',
+  'api key / secret / password 必须能命中，且大小写不敏感',
+)
+expect(
+  '英文否定式也认',
+  inferAnchor({ title: 'credentials', body: 'never commit the secret to git' }).mode,
+  'full',
+  'never / do not 与中文否定同权',
+)
+expect(
+  '技术描述里的「默认」不算立规矩',
+  inferAnchor({
+    title: 'Windows 路径不能超过 260 字符',
+    body: 'NTFS 默认限制，长路径要开 LongPathsEnabled。',
+  }).mode,
+  (v) => v !== 'full',
+  '「默认 / 一般 / 通常」是技术常用词，不能当作立规矩信号',
+)
+expect(
+  '裸 key 不误命中',
+  inferAnchor({ title: '键盘布局', body: 'keyboard layout 差异' }).mode,
+  'off',
+  '词表里不放裸 key，避免「关键 / keyboard」误判',
+)
+expect(
   '理由里点名命中措辞',
   inferAnchor({ title: '必须跑测试', body: '' }).why,
   (v) => typeof v === 'string' && v.includes('必须'),

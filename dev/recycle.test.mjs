@@ -220,6 +220,84 @@ const badDays = await call({ op: 'recycle.set', days: 99999 })
 expect('越界天数被拒', badDays.body.ok, (v) => v === false, '0–3650 之外应报错')
 await call({ op: 'recycle.set', days: 30 })
 
+/* 9) 把天数改小会立刻永久删除：必须先 dryRun 报数，正式清理前留整库备份 */
+async function callOn(h, payload) {
+  const body = Buffer.from(JSON.stringify(payload), 'utf8')
+  const req = {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    async *[Symbol.asyncIterator]() {
+      yield body
+    },
+  }
+  let text = ''
+  const res = { writeHead() {}, end(chunk) { text = String(chunk ?? '') } }
+  await h(req, res)
+  return JSON.parse(text || '{}')
+}
+
+const raw9 = await readStore()
+for (const n of [1, 2]) {
+  raw9.items.push({
+    id: `m-expiring${n}`,
+    title: `过期候选 ${n}`,
+    body: 'x',
+    tags: [],
+    groupId: null,
+    enabled: true,
+    pinned: false,
+    status: 'active',
+    source: 'manual',
+    order: 200 + n,
+    anchorMode: 'off',
+    createdAt: daysAgo(60),
+    updatedAt: daysAgo(10),
+    deletedAt: daysAgo(10),
+  })
+}
+await fs.writeFile(storeFile, JSON.stringify(raw9, null, 2), 'utf8')
+const before9 = (await readStore()).items.length
+
+let handler3 = null
+const ctx3 = {
+  logger: { info() {}, warn() {}, error() {} },
+  inject(_names, cb) {
+    cb(ctx3)
+  },
+  on() {},
+  effect: (fn) => fn(),
+  get: () => undefined,
+  webServer: {
+    register(route) {
+      handler3 = route.handler
+      return () => {}
+    },
+  },
+  tools: { register() {} },
+  systemPrompt: { section() {} },
+}
+const fresh9 = await import(`../index.js?dry=${Date.now()}`)
+fresh9.apply(ctx3)
+
+const dry = await callOn(handler3, { op: 'recycle.set', days: 1, dryRun: true })
+expect('dryRun 报告将清理条数', dry.willPurge, (v) => v === 2, JSON.stringify(dry))
+expect('dryRun 不改磁盘', (await readStore()).items.length, (v) => v === before9, 'dryRun 不应删数据')
+const cfgAfterDry = JSON.parse(await fs.readFile(path.join(tmpRoot, 'config.json'), 'utf8'))
+expect('dryRun 不改配置', cfgAfterDry.recycleDays, (v) => v === 30, 'dryRun 不应写 config.json')
+
+const real = await callOn(handler3, { op: 'recycle.set', days: 1 })
+expect('确认后真的清理', real.purged, (v) => v === 2, JSON.stringify(real))
+expect('清理后磁盘条目减少', (await readStore()).items.length, (v) => v === before9 - 2, '应少两条')
+const backups = (await fs.readdir(tmpRoot)).filter((name) => name.startsWith('store.json.pre-purge-'))
+expect('清理前留了整库备份', backups.length, (v) => v === 1, JSON.stringify(backups))
+const backupJson = backups.length ? JSON.parse(await fs.readFile(path.join(tmpRoot, backups[0]), 'utf8')) : { items: [] }
+expect(
+  '备份里还能找到被删的条目',
+  backupJson.items.some((item) => item.id === 'm-expiring1'),
+  (v) => v === true,
+  '备份内容不对',
+)
+
 await fs.rm(tmpRoot, { recursive: true, force: true })
 
 console.log(failures.length ? `\nRECYCLE FAILED: ${failures.join(', ')}\n` : '\nRECYCLE OK\n')

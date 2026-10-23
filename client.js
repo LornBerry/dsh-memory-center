@@ -2340,7 +2340,34 @@ window.__ModuleLoader__.load({
                         className: 'dmc-select dmc-select-mini',
                         value: String(current),
                         disabled: Boolean(info.locked),
-                        onChange: (event) => run('recycle.set', { days: Number(event.target.value) }),
+                        onChange: async (event) => {
+                          const days = Number(event.target.value)
+                          // 改小天数会立刻永久删除过期条目：先 dryRun 问清楚，再让用户确认
+                          let willPurge = 0
+                          let titles = []
+                          try {
+                            const probe = await api('recycle.set', { days, dryRun: true })
+                            willPurge = Number(probe.willPurge || 0)
+                            titles = Array.isArray(probe.titles) ? probe.titles : []
+                          } catch (error) {
+                            setError(error)
+                            return
+                          }
+                          if (!willPurge) {
+                            await run('recycle.set', { days })
+                            return
+                          }
+                          setConfirmAsk({
+                            title: `保留 ${days} 天后会永久删除 ${willPurge} 条记忆，继续吗？`,
+                            message: '这些条目已经超过新的保留天数，改完会立刻从回收站彻底删除，无法在面板里撤销。',
+                            detail: titles.length ? `将被删除：${titles.join('、')}${willPurge > titles.length ? ' …' : ''}` : '',
+                            confirmLabel: `永久删除 ${willPurge} 条`,
+                            danger: true,
+                            onConfirm: async () => {
+                              await run('recycle.set', { days })
+                            },
+                          })
+                        },
                       },
                       ...options.map((days) =>
                         h('option', { key: String(days), value: String(days) }, days === 0 ? '不自动清理' : `${days} 天`),

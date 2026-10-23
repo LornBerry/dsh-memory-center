@@ -1006,10 +1006,15 @@ function uniqueGroupName(state, name, exceptId) {
  * 回收站的到期清理：软删除超过 keepDays 天的条目在加载时彻底删除（并写墓碑）。
  * 返回被清掉的 id 列表，调用方负责 persist；keepDays<=0 时只清 0 天（即不自动清）。
  */
-function purgeExpiredDeleted(state, keepDays = RECYCLE_KEEP_DAYS) {
+/** 按保留天数算出「将要被清理」的条目（不改动 state，给 dryRun 与正式清理共用）。 */
+function expiringDeleted(state, keepDays = RECYCLE_KEEP_DAYS) {
   if (!(keepDays > 0)) return []
   const cutoff = Date.now() - keepDays * 86400000
-  const expired = state.items.filter((item) => item.deletedAt && Date.parse(item.deletedAt) < cutoff)
+  return state.items.filter((item) => item.deletedAt && Date.parse(item.deletedAt) < cutoff)
+}
+
+function purgeExpiredDeleted(state, keepDays = RECYCLE_KEEP_DAYS) {
+  const expired = expiringDeleted(state, keepDays)
   if (!expired.length) return []
   const ids = expired.map((item) => item.id)
   markDeleted(state, ids)
@@ -1595,19 +1600,36 @@ async function runOp(op, payload) {
       if (ENV_RECYCLE_DAYS !== null) throw fail('回收站保留天数已被环境变量 DSH_MEMORY_RECYCLE_DAYS 固定，请先去掉该变量')
       const raw = Number(payload.days)
       if (!Number.isFinite(raw) || raw < 0 || raw > 3650) throw fail('保留天数要在 0（不自动清理）到 3650 之间')
-      RECYCLE_KEEP_DAYS = Math.round(raw)
-      await saveConfig(DATA_DIR, { recycleDays: RECYCLE_KEEP_DAYS })
-      if (RECYCLE_KEEP_DAYS > 0) {
-        const removed = purgeExpiredDeleted(state)
-        if (removed.length) {
-          await persist()
-          return snapshot(state, sessionId, {
-            message: `回收站改为保留 ${RECYCLE_KEEP_DAYS} 天，已清掉 ${removed.length} 条过期记忆`,
-          })
+      const days = Math.round(raw)
+      // 改小天数会立刻永久删除过期条目，所以先算清楚、由调用方确认（dryRun 不写盘、不改配置）
+      const expiring = expiringDeleted(state, days)
+      if (payload.dryRun === true) {
+        return {
+          ok: true,
+          dryRun: true,
+          days,
+          currentDays: RECYCLE_KEEP_DAYS,
+          willPurge: expiring.length,
+          ids: expiring.map((item) => item.id),
+          titles: expiring.slice(0, 10).map((item) => item.title),
         }
+      }
+      RECYCLE_KEEP_DAYS = days
+      await saveConfig(DATA_DIR, { recycleDays: RECYCLE_KEEP_DAYS })
+      if (expiring.length) {
+        // 永久删除前先留一份整库快照，事后可以人工捞回
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        await fs.copyFile(STORE_FILE, `${STORE_FILE}.pre-purge-${stamp}`).catch(() => {})
+        purgeExpiredDeleted(state, RECYCLE_KEEP_DAYS)
+        await persist()
+        return snapshot(state, sessionId, {
+          message: `回收站改为保留 ${RECYCLE_KEEP_DAYS} 天，已清掉 ${expiring.length} 条过期记忆（清理前已备份）`,
+          purged: expiring.length,
+        })
       }
       return snapshot(state, sessionId, {
         message: RECYCLE_KEEP_DAYS > 0 ? `回收站改为保留 ${RECYCLE_KEEP_DAYS} 天` : '回收站改为不自动清理',
+        purged: 0,
       })
     }
 
