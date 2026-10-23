@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { canWriteDir, candidateDataDirs, pickDataDir } from './lib/paths.js'
+import { SYNONYM_GROUPS, searchItems } from './lib/retrieval.js'
 import { hasGit, mergeStates, normalizeSync, syncNow as runSync } from './lib/sync.js'
 
 export const name = 'memory-center'
@@ -46,6 +47,25 @@ let SOFT_INJECT_CHARS = Math.max(1000, Math.floor(MAX_INJECT_CHARS * COMPRESS_RA
 function applyCompressRatio(ratio) {
   COMPRESS_RATIO = ratio
   SOFT_INJECT_CHARS = Math.max(1000, Math.floor(MAX_INJECT_CHARS * ratio))
+}
+
+/**
+ * 检索用的同义组：内置一组中文常见说法，用户可在 config.json 的 synonyms 里追加自己的说法
+ * （每条是字符串数组），检索时按 0.5 权重扩展召回。
+ */
+let SYNONYMS = SYNONYM_GROUPS
+
+function mergeSynonyms(custom) {
+  const groups = SYNONYM_GROUPS.map((group) => [...group])
+  if (Array.isArray(custom)) {
+    for (const entry of custom) {
+      const words = (Array.isArray(entry) ? entry : [entry])
+        .map((word) => String(word ?? '').trim())
+        .filter(Boolean)
+      if (words.length >= 2) groups.push(words)
+    }
+  }
+  return groups
 }
 
 const PLUGIN_ID = 'dsh-memory-center'
@@ -93,6 +113,8 @@ async function loadConfig() {
   // 面板里拖过的压缩阈值；环境变量优先，设了环境变量就不读盘上的值。
   const savedRatio = parseRatio(config.injectRatio)
   if (ENV_COMPRESS_RATIO === null && savedRatio !== null) applyCompressRatio(savedRatio)
+  // 用户自建的同义词组（config.json 的 synonyms），追加在内置组之后。
+  SYNONYMS = mergeSynonyms(config.synonyms)
   if (gitOk === null) gitOk = await hasGit()
 }
 
@@ -1602,24 +1624,25 @@ async function runOp(op, payload) {
     }
 
     case 'search': {
-      const query = String(payload.query ?? '').trim().toLowerCase()
+      const query = String(payload.query ?? '').trim()
       if (!query) throw fail('搜索词不能为空')
       const includeArchived = payload.includeArchived === true
-      const hits = state.items
+      const pool = state.items
         .filter((item) => !item.deletedAt && item.status === 'active' && item.enabled)
         .filter((item) => includeArchived || !item.archivedAt)
-        .filter((item) =>
-          `${item.title}\n${item.body}\n${item.tags.join(' ')}`.toLowerCase().includes(query),
-        )
-        .slice(0, 50)
+      const hits = searchItems(pool, query, { limit: 50, synonyms: SYNONYMS })
       return {
         ok: true,
-        hits: hits.map((item) => ({
+        query,
+        hits: hits.map(({ item, score, snippet }) => ({
           id: item.id,
           title: item.title,
           group: groupNameOf(state, item.groupId),
           tags: item.tags,
           body: item.body,
+          snippet,
+          score: Math.round(score * 1000) / 1000,
+          anchor: item.anchorMode || 'off',
           archived: Boolean(item.archivedAt),
         })),
       }
@@ -1735,7 +1758,7 @@ function registerTools(ctx) {
     },
     async execute(args) {
       const state = await ensureLoaded()
-      const query = String(args?.query ?? '').trim().toLowerCase()
+      const query = String(args?.query ?? '').trim()
       const limit = Math.max(1, Math.min(50, Number(args?.limit) || 10))
       const includeArchived = args?.includeArchived === true
       const base = state.items.filter(
@@ -1745,20 +1768,18 @@ function registerTools(ctx) {
       const archivedCount = base.filter((item) => item.archivedAt).length
       const hits = (
         query
-          ? pool.filter((item) =>
-              `${item.title}\n${item.body}\n${item.tags.join(' ')}`.toLowerCase().includes(query),
-            )
-          : pool
-      ).slice(0, limit)
+          ? searchItems(pool, query, { limit, synonyms: SYNONYMS })
+          : pool.slice(0, limit).map((item) => ({ item, score: 0, snippet: '' }))
+      )
       const archivedNote =
         archivedCount && !includeArchived ? `（另有 ${archivedCount} 条已归档，默认不参与检索）` : ''
       if (!hits.length) {
-        return `记忆库中没有匹配「${args?.query ?? ''}」的启用记忆（共 ${pool.length} 条启用记忆）${archivedNote}。`
+        return `记忆库中没有匹配「${args?.query ?? ''}」的启用记忆（共 ${pool.length} 条启用记忆）${archivedNote}。换个说法（同义词、上位词）再试一次，或调用 memory_search 时不带关键词来列出全部标题。`
       }
       const lines = [
-        `匹配 ${hits.length} 条（记忆库共 ${pool.length} 条启用记忆）${archivedNote}：`,
+        `匹配 ${hits.length} 条（记忆库共 ${pool.length} 条启用记忆，按相关度排序）${archivedNote}：`,
         '',
-        ...hits.flatMap((item) => [
+        ...hits.flatMap(({ item }) => [
           `- ${item.pinned ? '📌 ' : ''}${item.title}  〔${groupNameOf(state, item.groupId)}${item.tags.length ? ' / ' + item.tags.join(' / ') : ''}〕${item.archivedAt ? ' 〔已归档〕' : ''}`,
           ...item.body
             .trim()

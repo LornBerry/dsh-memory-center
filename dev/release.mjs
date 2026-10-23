@@ -15,7 +15,7 @@
  *   node dev/release.mjs patch --skip-tests
  */
 import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -96,6 +96,27 @@ mkdirSync(DIST, { recursive: true })
 const tgz = path.join(DIST, `dsh-memory-center-${next}.tgz`)
 run('tar', ['-czf', tgz, '-C', staging, 'package'])
 rmSync(staging, { recursive: true, force: true })
+
+/* ------------------------------------------------- 3.5 校验包内文件齐全 */
+
+// 2026-10-23 踩过：新增 lib/retrieval.js 却忘了加进 package.json 的 files，
+// 打出来的 tgz 缺文件，install_bundle 装完 entry 直接 import 失败、插件消失。
+// 这里把「运行时会 import 的文件」逐个对一遍，缺一个就拒绝产出。
+const required = ['index.js', 'client.js', 'cordis.patch.yml', 'icon.svg', 'package.json']
+const libDir = path.join(ROOT, 'lib')
+if (existsSync(libDir)) {
+  for (const entry of readdirSync(libDir)) {
+    if (entry.endsWith('.js')) required.push(`lib/${entry}`)
+  }
+}
+const listing = execFileSync('tar', ['-tzf', tgz], { encoding: 'utf8' })
+  .split(/\r?\n/)
+  .map((line) => line.trim())
+const missing = required.filter((file) => !listing.includes(`package/${file}`))
+if (missing.length) {
+  rmSync(tgz, { force: true })
+  throw new Error(`打包缺少文件（检查 package.json 的 files）：${missing.join(', ')}`)
+}
 
 /* ---------------------------------------------------------------- 4. 收尾 */
 

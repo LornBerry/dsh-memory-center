@@ -1490,7 +1490,9 @@ window.__ModuleLoader__.load({
       const embedded = !!(props && props.embedded)
       const panelClass = embedded ? 'dmc-panel is-embedded' : 'dmc-panel'
       const [filter, setFilter] = useState((props && props.debugFilter) || '__all')
-      const [query, setQuery] = useState('')
+      const [query, setQuery] = useState((props && props.debugQuery) || '')
+      // 服务端检索结果（同义词 + 相关度排序）：{ query, ids, snippets }
+      const [hits, setHits] = useState((props && props.debugHits) || null)
       const [editing, setEditing] = useState(null)
       const [creating, setCreating] = useState(false)
       const [importing, setImporting] = useState(false)
@@ -1531,6 +1533,38 @@ window.__ModuleLoader__.load({
       const recycleMode = filter === '__deleted'
       const archiveMode = filter === '__archived'
       const pool = recycleMode ? deletedItems : archiveMode ? archivedItems : data.items
+
+      // 搜索走宿主检索（同义词扩展 + 相关度排序），输入停顿 180ms 再请求；
+      // 请求回来之前先用本地子串兜底，避免输入时的空窗。
+      useEffect(() => {
+        const raw = query.trim()
+        if (!raw) {
+          setHits(null)
+          return undefined
+        }
+        let cancelled = false
+        const timer = setTimeout(() => {
+          api('search', { query: raw, includeArchived: archiveMode })
+            .then((result) => {
+              if (cancelled) return
+              const ids = []
+              const snippets = {}
+              for (const hit of result.hits || []) {
+                ids.push(hit.id)
+                if (hit.snippet) snippets[hit.id] = hit.snippet
+              }
+              setHits({ query: raw, ids, snippets })
+            })
+            .catch(() => {})
+        }, 180)
+        return () => {
+          cancelled = true
+          clearTimeout(timer)
+        }
+      }, [query, archiveMode])
+
+      const activeHits = hits && hits.query === query.trim() ? hits : null
+
       const filtered = pool.filter((item) => {
         if (recycleMode || archiveMode) {
           // 回收站 / 归档只按关键词过滤，不再套文件夹/待确认条件。
@@ -1540,8 +1574,13 @@ window.__ModuleLoader__.load({
           if (filter !== '__all' && filter !== '__pending' && filter !== '__ungrouped' && item.groupId !== filter) return false
         }
         if (query.trim()) {
-          const haystack = `${item.title}\n${item.body}\n${item.tags.join(' ')}`.toLowerCase()
-          if (!haystack.includes(query.trim().toLowerCase())) return false
+          const raw = query.trim()
+          if (activeHits) {
+            if (!activeHits.ids.includes(item.id)) return false
+          } else {
+            const haystack = `${item.title}\n${item.body}\n${item.tags.join(' ')}`.toLowerCase()
+            if (!haystack.includes(raw.toLowerCase())) return false
+          }
         }
         return true
       })
@@ -1550,6 +1589,12 @@ window.__ModuleLoader__.load({
       // 置顶条目无论正序倒序都排在最前，所以方向只作用在同一置顶分组内部。
       const sorted = (() => {
         const list = [...filtered]
+        // 搜索时按相关度排（宿主已经算好顺序），不再套文件夹/时间排序。
+        if (activeHits) {
+          const rank = new Map(activeHits.ids.map((id, index) => [id, index]))
+          list.sort((a, b) => (rank.get(a.id) ?? 1e9) - (rank.get(b.id) ?? 1e9))
+          return list
+        }
         const factor = sortDir === 'desc' ? -1 : 1
         const byPinned = (a, b) => (a.pinned ? 0 : 1) - (b.pinned ? 0 : 1)
         if (sortKey === 'updated' || sortKey === 'created') {
@@ -1839,7 +1884,14 @@ window.__ModuleLoader__.load({
           listMode
             ? null
             : query.trim()
-              ? h('div', { className: 'dmc-item-body' }, ...highlightNodes((item.body || '').slice(0, 260), query))
+              ? h(
+                  'div',
+                  { className: 'dmc-item-body' },
+                  ...highlightNodes(
+                    ((activeHits && activeHits.snippets[item.id]) || (item.body || '').slice(0, 260)),
+                    query,
+                  ),
+                )
               : h('div', { className: 'dmc-item-body dmc-md' }, ...renderMarkdown(item.body)),
           h(
             'div',

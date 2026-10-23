@@ -321,6 +321,13 @@ const panelStates = [
   { label: ' sort-updated-asc', props: { debugSort: 'updated-asc' } },
   { label: ' recycle', props: { debugFilter: '__deleted' } },
   {
+    label: ' search-hits',
+    props: {
+      debugQuery: '存哪',
+      debugHits: { query: '存哪', ids: ['m-2', 'm-1'], snippets: { 'm-2': '……记忆只存在本机一个目录里……' } },
+    },
+  },
+  {
     label: ' bulk-confirm',
     props: { debugSelected: ['m-1', 'm-9'], debugConfirm: { title: '删除选中的 2 条记忆？', message: '会先进入回收站', confirmLabel: '移入回收站', danger: true } },
   },
