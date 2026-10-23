@@ -164,6 +164,8 @@ window.__ModuleLoader__.load({
         .dmc-anchor-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
         .dmc-anchor-dot.full { background: #e25e36; }
         .dmc-anchor-dot.weight { background: #2ea078; }
+        /* 同主题旧版：提醒「这条已经被后来的说法覆盖」，用黄色不等于报错 */
+        .dmc-tag.dmc-stale { background: rgba(216,170,40,.22); color: inherit; box-shadow: inset 0 0 0 1px rgba(216,170,40,.5); cursor: help; }
         /* Markdown 渲染 */
         .dmc-md { font-size: 12px; line-height: 1.62; word-break: break-word; }
         .dmc-md > :first-child { margin-top: 0; }
@@ -2058,6 +2060,23 @@ window.__ModuleLoader__.load({
             ? h('span', { className: 'dmc-tag dmc-anchor-weight', title: anchorHint(item) }, '权重锚点')
             : null
 
+      const topicIndex = (data && data.topics && data.topics.byId) || {}
+
+      const staleTag = (item) => {
+        const topic = topicIndex[item.id]
+        if (!topic || topic.isLatest) return null
+        const at = String(topic.latestAt || '').slice(0, 10)
+        return h(
+          'span',
+          {
+            className: 'dmc-tag dmc-stale',
+            title: `同主题共 ${topic.total} 条，最新是「${topic.latestTitle}」${at ? `（${at} 更新）` : ''}。改这条会让它变回最新；确认旧版没用了就归档它。`,
+            onClick: (event) => event.stopPropagation(),
+          },
+          '旧版',
+        )
+      }
+
       const renderItem = (item) => {
         const listMode = view === 'list'
         const stamp = String(item.updatedAt || item.createdAt || '').replace('T', ' ').slice(0, 16)
@@ -2098,6 +2117,7 @@ window.__ModuleLoader__.load({
             item.status === 'pending' ? h('span', { className: 'dmc-tag' }, '待确认') : null,
             listMode ? h('span', { className: 'dmc-tag' }, groupName(data, item.groupId)) : null,
             listMode ? null : anchorTag(item),
+            staleTag(item),
             listMode
               ? h('span', { className: 'dmc-list-meta' }, `${item.enabled ? '' : '已停用 · '}${stamp}`)
               : h('span', { className: 'dmc-tag' }, item.source === 'auto' ? '模型写入' : item.source === 'import' ? '导入' : '手动'),
@@ -2319,6 +2339,28 @@ window.__ModuleLoader__.load({
                   ),
                 )
               : null,
+            (() => {
+              const groups = (data.topics && data.topics.groups) || []
+              if (!groups.length) return null
+              const byId = (data.topics && data.topics.byId) || {}
+              const staleIds = Object.keys(byId).filter((id) => byId[id] && !byId[id].isLatest)
+              if (!staleIds.length) return null
+              return h(
+                'div',
+                {
+                  className: 'dmc-budget',
+                  role: 'button',
+                  tabIndex: 0,
+                  style: { cursor: 'pointer', marginTop: '5px' },
+                  title: '同主题有多条、说法不一致时，标「旧版」的那几条通常该改写或归档；点一下先选中它们',
+                  onClick: () => {
+                    setFilter('__all')
+                    setSelected(staleIds)
+                  },
+                },
+                `同主题 ${groups.length} 组 · 旧版 ${staleIds.length} 条 → 点此选中`,
+              )
+            })(),
           ),
         ),
         h(

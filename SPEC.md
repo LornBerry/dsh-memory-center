@@ -145,6 +145,15 @@
 - **环境变量仍最优先**：`DSH_MEMORY_MAX_CHARS` / `DSH_MEMORY_COMPRESS_RATIO` 任一存在时，对应拉条只读（`maxCharsLocked` / `ratioLocked`）。
 - **口径说明**：上限按字符算，不是 token；中文与英文同等字符数信息量不同，面板文案里写明了这一点。
 
+### F17 同主题新旧标注（v1.11，用户追加需求：别让旧结论继续生效）
+- **判定**：只在 `active + enabled + 未删除 + 未归档` 的条目之间两两比较，用标题/正文的词集合（`lib/retrieval.js` 的 tokenize）算 Jaccard；标题 ≥ 0.5 或「正文共享词 ≥ 5 且 Jaccard ≥ 0.4」才算同主题。偏保守——漏判成两条独立记忆无害，误判会让模型以为旧结论被覆盖。
+- **分组与最新**：同一组内按 `updatedAt` 降序，第一条为 `latestId`；组内时间跨度小于 60 秒的视为同一批写入，不标注新旧（`byId` 里不出现）。
+- **注入呈现**：非最新条目在标题行下加 `〔旧版，<日期> 有过更新；同主题以「<最新标题>」为准〕`；整段头部多一条统一说明；`stats.stale` 记被标旧版的条数，`stats.topics` 记分组数。
+- **口径一致**：`costOf(item, topic)` 把这一行也算进字符成本，容量画像与注入预算共用。
+- **检索**：`search` op 的命中项带 `topic`（`isLatest/latestTitle/latestAt/total`）；`memory_search` 在旧版行尾追加同款说明。
+- **面板**：条目上黄色「旧版」徽标（悬停显示最新标题与日期）；左栏底部「同主题 N 组 · 旧版 M 条 → 点此选中」。
+- **缓存**：`topicsOf(state)` 按 `state.updatedAt + 条目数 + 各条 updatedAt` 缓存，同一请求里 `capacityOf` 与 `composeInjection` 不重复算。
+
 ## 4. 验收标准
 
 | # | 验收标准 | 验证方式 |
@@ -178,6 +187,7 @@
 | AC27 | 三类自动备份（`corrupt` / `pre-switch` / `pre-purge`）统一落在 `<数据目录>/backups/`，每种只保留最近 5 份；老版本散在数据目录根上的 `store.json.corrupt-*` 在下次加载时自动迁入；`backups.prune` / `backups.clear` 只删这三类文件，不碰 `store.json` / `sessions.json` / `config.json` | `node dev/backups.test.mjs` |
 | AC28 | `DSH_MEMORY_MAX_CHARS` 可在容量弹窗里用拉条改（4000–50000，步进 1000），应用后注入上限与压缩线立即重算并写入 `config.json` 的 `maxChars`，刷新/重启后仍生效；设了该环境变量时拉条只读并说明原因；越界值被拒 | `node dev/session-default.test.mjs` + 手动 |
 | AC29 | 面板工具栏的「新会话默认」可选「每次都问 / 不加载 / 全部加载 / 当前会话选的文件夹」，写入 `config.json` 的 `sessionDefault`；设成非 `ask` 后新会话不再弹询问卡片且按默认注入，单个会话自己的选择覆盖默认，「清除本会话选择」后退回默认 | `node dev/session-default.test.mjs` |
+| AC30 | 两条说法冲突的记忆（同为启用、未归档）被判为同主题：注入时旧版带〔旧版…以「<最新标题>」为准〕、头部有统一说明、`stats.stale=1`；检索命中旧版时行尾带同款提示；面板条目出现「旧版」徽标、左栏出现「同主题 N 组 · 旧版 M 条」；归档/停用条目不参与；同一分钟内写入的不标新旧 | `node dev/topic.test.mjs` + `node dev/smoke-client.mjs` |
 
 ## 5. 非目标（v1 不做）
 

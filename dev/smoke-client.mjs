@@ -203,6 +203,31 @@ const snapshot = {
     lastSyncError: '',
   },
   gitAvailable: true,
+  sessionDefault: { mode: 'ask', groupIds: [] },
+  topics: {
+    groups: [
+      { id: 't-m-1', itemIds: ['m-1', 'm-2'], latestId: 'm-1', latestTitle: '记忆数据放在 E 盘', latestAt: '2026-10-22T05:00:00.000Z' },
+    ],
+    byId: {
+      'm-1': { groupId: 't-m-1', isLatest: true, latestId: 'm-1', latestTitle: '记忆数据放在 E 盘', latestAt: '2026-10-22T05:00:00.000Z', total: 2 },
+      'm-2': { groupId: 't-m-1', isLatest: false, latestId: 'm-1', latestTitle: '记忆数据放在 E 盘', latestAt: '2026-10-22T05:00:00.000Z', total: 2 },
+    },
+  },
+  injection: {
+    total: 2,
+    kept: 2,
+    dropped: 0,
+    chars: 120,
+    limit: 12000,
+    softLimit: 9600,
+    ratio: 0.8,
+    totalChars: 120,
+    over: false,
+    indexMode: false,
+    anchors: 1,
+    topics: 1,
+    stale: 1,
+  },
   updatedAt: '2026-10-22T00:00:00.000Z',
 }
 
@@ -377,6 +402,11 @@ for (const { options, component } of registrations) {
       if (options.name === 'main' && tag === ' batch') {
         if (!html.includes('已选 2 条')) fail.push('批量条没渲染出「已选 2 条」')
         if (!html.includes('移动到…')) fail.push('批量条缺少「移动到…」下拉')
+      }
+      if (options.name === 'main' && !tag.trim()) {
+        // 同主题旧版标注：徽标 + 左栏汇总入口都要在默认视图里出现
+        if (!html.includes('旧版')) fail.push('同主题旧版没有在条目上标出来')
+        if (!html.includes('同主题 1 组')) fail.push('左栏缺少「同主题 N 组」汇总入口')
       }
       if (options.name === 'main' && tag === ' menu-item') {
         if (!html.includes('存放到文件夹')) fail.push('条目右键菜单缺少「存放到文件夹」分组')

@@ -17,6 +17,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { canWriteDir, candidateDataDirs, pickDataDir } from './lib/paths.js'
 import { inferAnchor } from './lib/anchor.js'
+import { groupTopics } from './lib/topics.js'
 import { SYNONYM_GROUPS, buildIndex, searchItems } from './lib/retrieval.js'
 import { hasGit, mergeStates, normalizeSync, syncNow as runSync } from './lib/sync.js'
 
@@ -826,18 +827,52 @@ function anchorRank(item) {
   return item.pinned ? 2 : 3
 }
 
-function renderItemLines(item) {
+function renderItemLines(item, topic) {
   const tags = item.tags.length ? `  〔${item.tags.join(' / ')}〕` : ''
   const anchor = item.anchorMode === 'full' ? '〔完全锚点〕' : item.anchorMode === 'weight' ? '〔权重锚点〕' : ''
   const lines = [`- ${item.pinned ? '📌 ' : ''}${anchor}**${item.title}**${tags}`]
+  // 同主题有多条、且这条不是最新的：明说是旧版，否则模型会把两套说法都当真。
+  if (topic && !topic.isLatest) {
+    const at = String(topic.latestAt || '').slice(0, 10)
+    lines.push(`  〔旧版${at ? `，${at} 有过更新` : ''}；同主题以「${topic.latestTitle}」为准〕`)
+  }
   const body = String(item.body ?? '').trim()
   if (body) for (const line of body.split('\n')) lines.push(line ? `  ${line}` : '')
   return lines
 }
 
 /** 一条记忆注入时的字符成本（渲染后的真实长度，含换行）。容量画像与预算共用这一处口径。 */
-function costOf(item) {
-  return renderItemLines(item).join('\n').length + 1
+function costOf(item, topic) {
+  return renderItemLines(item, topic).join('\n').length + 1
+}
+
+/** 同主题分组的缓存：快照一次请求里 capacityOf 与 composeInjection 会各要一次，别重复算。 */
+let topicCache = { key: '', value: null }
+
+function topicsOf(state) {
+  const pool = state.items.filter(
+    (item) => item.status === 'active' && item.enabled && !item.deletedAt && !item.archivedAt,
+  )
+  const key = `${state.updatedAt || ''}|${pool.length}|${pool.map((item) => item.updatedAt || '').join(',')}`
+  if (topicCache.key === key && topicCache.value) return topicCache.value
+  const value = groupTopics(pool)
+  topicCache = { key, value }
+  return value
+}
+
+/** 面板要的形状：分组列表 + id → 标注，前者画「同主题」入口，后者给每条打徽标。 */
+function topicView(state) {
+  const { groups, byId } = topicsOf(state)
+  return {
+    groups: groups.map((group) => ({
+      id: group.id,
+      itemIds: group.itemIds,
+      latestId: group.latestId,
+      latestTitle: group.latestTitle,
+      latestAt: group.latestAt,
+    })),
+    byId: Object.fromEntries(byId),
+  }
 }
 
 /** 注入头部：统计行要等装完才知道，所以先给一个「零值」版本用于估算预算。 */
@@ -882,11 +917,16 @@ function composeInjection(state, sessionId) {
       over: false,
       indexMode: false,
       anchors: 0,
+      topics: 0,
+      stale: 0,
     },
   }
   if (!selection || selection.mode === 'none') return empty
   const selected = selectedItemIds(state, selection)
   if (!selected.length) return empty
+
+  const topics = topicsOf(state)
+  const topicOfItem = (item) => topics.byId.get(item.id)
 
   const priority = [...selected].sort((a, b) => {
     const d = anchorRank(a) - anchorRank(b)
@@ -909,10 +949,10 @@ function composeInjection(state, sessionId) {
   const RESERVE = 320
   // 压缩阈值就是这里的预算：超过 softLimit（默认 80%）就只给标题，不等撑满 100%。
   let budget = SOFT_INJECT_CHARS - head.join('\n').length - RESERVE
-  const totalChars = priority.reduce((sum, item) => sum + costOf(item), 0)
+  const totalChars = priority.reduce((sum, item) => sum + costOf(item, topicOfItem(item)), 0)
   const kept = new Set()
   for (const item of priority) {
-    const cost = costOf(item)
+    const cost = costOf(item, topicOfItem(item))
     if (cost > budget) continue
     kept.add(item.id)
     budget -= cost
@@ -927,13 +967,26 @@ function composeInjection(state, sessionId) {
     groups.get(key).push(item)
   }
   const anchors = keptItems.filter((item) => item.anchorMode === 'full' || item.anchorMode === 'weight').length
+  const stale = keptItems.filter((item) => {
+    const topic = topicOfItem(item)
+    return topic && !topic.isLatest
+  }).length
+  const topicCount = new Set(
+    keptItems.map((item) => topicOfItem(item)).filter(Boolean).map((topic) => topic.groupId),
+  ).size
 
   const blocks = []
   // 头部只生成这一遍：统计行用真实的 kept/folders/dropped，不再先算一遍占位再重拼一次
   blocks.push(...headerLines(summaryLine({ kept: keptItems.length, folders: groups.size, dropped: dropped.length })))
+  if (stale) {
+    blocks.push(
+      `同主题有多条：标了〔旧版〕的以最新那条为准；如果旧版其实才是对的，去面板改一下，别让两套说法并存。`,
+    )
+    blocks.push('')
+  }
   for (const [groupId, groupItems] of groups) {
     blocks.push(`### ${groupId ? groupNameOf(state, groupId) : '未归类'}`)
-    for (const item of groupItems) blocks.push(...renderItemLines(item))
+    for (const item of groupItems) blocks.push(...renderItemLines(item, topicOfItem(item)))
     blocks.push('')
   }
 
@@ -968,6 +1021,9 @@ function composeInjection(state, sessionId) {
       // indexMode：本次有条目被降级成「只有标题」的索引清单
       indexMode: dropped.length > 0,
       anchors,
+      // 同主题分组数，以及其中被判为「旧版」的条数
+      topics: topicCount,
+      stale,
     },
   }
 }
@@ -1042,7 +1098,9 @@ function archiveView(state) {
 /** 容量画像：注入预算用了多少、文件夹各占多少、最长的几条是谁。 */
 function capacityOf(state) {
   // 与 composeInjection 共用 costOf：面板显示的占比必须就是注入时真正计入的字符数
-  const charsOf = costOf
+  // （包括「旧版」提示那一行，否则面板会少算几十个字符）
+  const topics = topicsOf(state)
+  const charsOf = (item) => costOf(item, topics.byId.get(item.id))
   const live = state.items.filter(
     (item) => !item.deletedAt && !item.archivedAt && item.status === 'active' && item.enabled,
   )
@@ -1137,6 +1195,7 @@ function snapshot(state, sessionId, extra) {
     },
     session: sessionView(state, sessionId),
     sessionDefault: SESSION_DEFAULT,
+    topics: topicView(state),
     preview: injection.text,
     injection: injection.stats,
     updatedAt: state.updatedAt,
@@ -2118,20 +2177,28 @@ async function runOp(op, payload) {
         .filter((item) => !item.deletedAt && item.status === 'active' && item.enabled)
         .filter((item) => includeArchived || !item.archivedAt)
       const hits = searchWithCache(pool, query, 50)
+      const topicIndex = topicsOf(state).byId
       return {
         ok: true,
         query,
-        hits: hits.map(({ item, score, snippet }) => ({
-          id: item.id,
-          title: item.title,
-          group: groupNameOf(state, item.groupId),
-          tags: item.tags,
-          body: item.body,
-          snippet,
-          score: Math.round(score * 1000) / 1000,
-          anchor: item.anchorMode || 'off',
-          archived: Boolean(item.archivedAt),
-        })),
+        hits: hits.map(({ item, score, snippet }) => {
+          const topic = topicIndex.get(item.id)
+          return {
+            id: item.id,
+            title: item.title,
+            group: groupNameOf(state, item.groupId),
+            tags: item.tags,
+            body: item.body,
+            snippet,
+            score: Math.round(score * 1000) / 1000,
+            anchor: item.anchorMode || 'off',
+            archived: Boolean(item.archivedAt),
+            // 同主题里这条是不是旧版；旧版要给「以谁为准」，否则检索出来只会加深旧结论
+            topic: topic
+              ? { isLatest: topic.isLatest, latestTitle: topic.latestTitle, latestAt: topic.latestAt, total: topic.total }
+              : null,
+          }
+        }),
       }
     }
 
@@ -2266,16 +2333,21 @@ function registerTools(ctx) {
       const lines = [
         `匹配 ${hits.length} 条（记忆库共 ${pool.length} 条启用记忆，按相关度排序）${archivedNote}：`,
         '',
-        ...hits.flatMap(({ item }) => [
-          `- ${item.pinned ? '📌 ' : ''}${item.title}  〔${groupNameOf(state, item.groupId)}${item.tags.length ? ' / ' + item.tags.join(' / ') : ''}〕${item.archivedAt ? ' 〔已归档〕' : ''}`,
-          ...item.body
-            .trim()
-            .split('\n')
-            .filter(Boolean)
-            .slice(0, 8)
-            .map((line) => `  ${line}`),
-          '',
-        ]),
+        ...hits.flatMap(({ item }) => {
+          const topic = topicsOf(state).byId.get(item.id)
+          const stale =
+            topic && !topic.isLatest ? ` 〔旧版，同主题以「${topic.latestTitle}」为准〕` : ''
+          return [
+            `- ${item.pinned ? '📌 ' : ''}${item.title}  〔${groupNameOf(state, item.groupId)}${item.tags.length ? ' / ' + item.tags.join(' / ') : ''}〕${item.archivedAt ? ' 〔已归档〕' : ''}${stale}`,
+            ...item.body
+              .trim()
+              .split('\n')
+              .filter(Boolean)
+              .slice(0, 8)
+              .map((line) => `  ${line}`),
+            '',
+          ]
+        }),
       ]
       return lines.join('\n').trimEnd()
     },
