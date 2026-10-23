@@ -119,6 +119,27 @@ const after = JSON.parse(await fs.readFile(path.join(dir, 'store.json'), 'utf8')
 expect('复用同名文件夹', after.groups.filter((entry) => entry.name === title).length, (v) => v === 1, '不应重复建组')
 expect('第三条也进组', after.items.filter((item) => item.sessionId === 's1' && item.groupId === group.id).length, (v) => v === 3, '应连同前两条')
 
+/* 锚点初判：写入时就该带上分类，不能一律是「不设锚点」 */
+const soft = after.items.find((item) => item.title === '会话一第一条')
+expect('普通内容初判为不设锚点', soft?.anchorMode, (v) => v === 'off', '没有强弱措辞应判 off')
+expect('初判来源标记为 inferred', soft?.anchorSource, (v) => v === 'inferred', '应由插件初判')
+expect('初判带理由', soft?.anchorWhy, (v) => typeof v === 'string' && v.length > 0, '应有可解释的理由')
+
+await write.execute(
+  { title: '部署纪律', body: '必须先在本地跑完测试，禁止直接推 main。' },
+  sessionExec('s4'),
+)
+await write.execute(
+  { title: '命名习惯', body: '变量名尽量用完整英文单词，避免缩写。' },
+  sessionExec('s5'),
+)
+const withAnchor = JSON.parse(await fs.readFile(path.join(dir, 'store.json'), 'utf8'))
+const hard = withAnchor.items.find((item) => item.title === '部署纪律')
+const pref = withAnchor.items.find((item) => item.title === '命名习惯')
+expect('硬性措辞初判为完全锚点', hard?.anchorMode, (v) => v === 'full', '必须/禁止 应判 full')
+expect('硬性理由点名措辞', hard?.anchorWhy, (v) => /必须|禁止/.test(String(v)), '理由里应出现命中的词')
+expect('偏好措辞初判为权重锚点', pref?.anchorMode, (v) => v === 'weight', '尽量/统一 应判 weight')
+
 await fs.rm(tmpRoot, { recursive: true, force: true })
 console.log(failures.length ? `\nMEMORY WRITE FAILED: ${failures.join(', ')}` : '\nMEMORY WRITE OK')
 process.exit(failures.length ? 1 : 0)

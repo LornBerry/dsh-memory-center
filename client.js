@@ -204,6 +204,7 @@ window.__ModuleLoader__.load({
         .dmc-menu-item:hover { background: rgba(127,127,127,.18); }
         .dmc-menu-item.danger { color: #ff7a7a; }
         .dmc-menu-head { padding: 6px 8px 2px; font-size: 11px; opacity: .55; }
+        .dmc-menu-note { padding: 0 8px 4px; font-size: 11px; line-height: 1.5; opacity: .6; max-width: 240px; }
         .dmc-menu-sep { height: 1px; margin: 4px 6px; background: rgba(127,127,127,.25); }
         .dmc-menu .dmc-menu-grid { display: flex; flex-wrap: wrap; gap: 4px; padding: 2px 6px 6px; }
       `
@@ -1834,6 +1835,11 @@ window.__ModuleLoader__.load({
                 ),
                 h('div', { key: 'sep-anchor', className: 'dmc-menu-sep' }),
                 h('div', { key: 'anchor-head', className: 'dmc-menu-head' }, '锚点（决定注入强度）'),
+                h(
+                  'div',
+                  { key: 'anchor-why', className: 'dmc-menu-note' },
+                  `${item.anchorSource === 'inferred' ? '当前由插件初判' : '当前为你手动设置'}${item.anchorWhy ? `：${item.anchorWhy}` : ''}`,
+                ),
                 ...[
                   ['full', '完全锚点：必须照此执行', '硬性要求，模型不得偏离'],
                   ['weight', '权重锚点：倾向性参考', '软性偏好，影响措辞与优先级，可偏离'],
@@ -1850,6 +1856,17 @@ window.__ModuleLoader__.load({
                     },
                     `${(item.anchorMode || 'off') === mode ? '✓ ' : ''}${label}`,
                   ),
+                ),
+                h(
+                  'button',
+                  {
+                    key: 'anchor-reinfer',
+                    className: 'dmc-menu-item',
+                    title: '按标题/正文/标签里的措辞重新判断一次（会覆盖手动设置）',
+                    onClick: () =>
+                      act(() => run('anchor.reinfer', { ids: [item.id], force: true })),
+                  },
+                  '↻ 按内容重新判断',
                 ),
                 h('div', { key: 'sep', className: 'dmc-menu-sep' }),
                 row(
@@ -1885,11 +1902,17 @@ window.__ModuleLoader__.load({
         )
       }
 
+      const anchorHint = (item) => {
+        const source = item.anchorSource === 'inferred' ? '插件按内容初判' : '你手动设置'
+        const why = item.anchorWhy ? `：${item.anchorWhy}` : ''
+        return `${source}${why}。可在「更多… → 锚点」里改`
+      }
+
       const anchorTag = (item) =>
         item.anchorMode === 'full'
-          ? h('span', { className: 'dmc-tag dmc-anchor-full' }, '完全锚点')
+          ? h('span', { className: 'dmc-tag dmc-anchor-full', title: anchorHint(item) }, '完全锚点')
           : item.anchorMode === 'weight'
-            ? h('span', { className: 'dmc-tag dmc-anchor-weight' }, '权重锚点')
+            ? h('span', { className: 'dmc-tag dmc-anchor-weight', title: anchorHint(item) }, '权重锚点')
             : null
 
       const renderItem = (item) => {
@@ -2403,6 +2426,15 @@ window.__ModuleLoader__.load({
                     ...data.groups.map((group) => h('option', { key: group.id, value: group.id }, group.name)),
                   ),
                   h('button', { className: 'dmc-btn', onClick: () => setTagging({ ids: selected }) }, '打标'),
+                  h(
+                    'button',
+                    {
+                      className: 'dmc-btn',
+                      title: '按标题/正文/标签里的措辞重新判断锚点（会覆盖手动设置）',
+                      onClick: () => run('anchor.reinfer', { ids: selected, force: true }),
+                    },
+                    '重判锚点',
+                  ),
                   h('button', { className: 'dmc-btn', onClick: () => batchPatch(selected, { enabled: false }) }, '停用'),
                   h('button', { className: 'dmc-btn', onClick: () => batchPatch(selected, { enabled: true }) }, '启用'),
                   h('button', { className: 'dmc-btn', onClick: () => batchPatch(selected, { pinned: true }) }, '置顶'),

@@ -90,6 +90,8 @@ node dev/recycle.test.mjs    # 回收站：软删除 / 恢复 / 彻底删除写�
 node dev/fields.test.mjs     # 字段往返：读写一圈后字段不能丢（白名单重建曾丢过 deletedAt/archivedAt）
 node dev/budget.test.mjs     # 注入预算与压缩线：默认 80%、整条不截断、阈值可调
 node dev/search.test.mjs     # 检索：分词 / BM25 / 同义词扩展 / 片段 / 余弦工具
+node dev/anchor.test.mjs     # 锚点影响注入：完全锚点必进、权重锚点靠前
+node dev/anchor-infer.test.mjs # 锚点初判规则：硬性/偏好/普通事实、优先级、理由文案
 node dev/doctor.mjs --url http://127.0.0.1:<端口>   # 安装与运行状态自检
 ```
 

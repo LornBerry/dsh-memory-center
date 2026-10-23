@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { canWriteDir, candidateDataDirs, pickDataDir } from './lib/paths.js'
+import { inferAnchor } from './lib/anchor.js'
 import { SYNONYM_GROUPS, buildIndex, searchItems } from './lib/retrieval.js'
 import { hasGit, mergeStates, normalizeSync, syncNow as runSync } from './lib/sync.js'
 
@@ -278,6 +279,8 @@ export const ITEM_FIELDS = {
   source: (value) => (['manual', 'auto', 'import', 'merge'].includes(value) ? value : 'manual'),
   sessionId: (value) => (typeof value === 'string' && value ? value : null),
   anchorMode: (value) => (['full', 'weight'].includes(value) ? value : 'off'),
+  anchorSource: (value) => (value === 'inferred' ? 'inferred' : 'user'),
+  anchorWhy: (value) => (typeof value === 'string' ? value : ''),
   order: (value, index) => (Number.isFinite(value) ? Number(value) : index),
   createdAt: (value) => (typeof value === 'string' ? value : nowIso()),
   updatedAt: (value) => (typeof value === 'string' ? value : nowIso()),
@@ -289,7 +292,23 @@ export const ITEM_FIELDS = {
 function normalizeItem(item, index) {
   const out = { id: item.id }
   for (const [field, coerce] of Object.entries(ITEM_FIELDS)) out[field] = coerce(item[field], index)
+  // 老数据没有 anchorSource：设过锚点的视为用户手设（不能被覆盖），全是 off 的交给插件重判
+  if (item.anchorSource === undefined) {
+    out.anchorSource = out.anchorMode === 'off' ? 'inferred' : 'user'
+    if (out.anchorSource === 'inferred' && !out.anchorWhy) out.anchorWhy = '等待按内容重判'
+  }
   return out
+}
+
+/**
+ * 决定一条记忆的锚点：显式指定优先，否则按内容初判。
+ * anchorSource 记住「是谁定的」：user 之后不再被正文改动覆盖，inferred 会在内容变了以后重判。
+ */
+function resolveAnchor(payload, title, body, tags) {
+  const explicit = ['full', 'weight', 'off'].includes(payload && payload.anchorMode) ? payload.anchorMode : null
+  if (explicit) return { anchorMode: explicit, anchorSource: 'user', anchorWhy: '手动设置' }
+  const guessed = inferAnchor({ title, body, tags })
+  return { anchorMode: guessed.mode, anchorSource: 'inferred', anchorWhy: guessed.why }
 }
 
 function normalizeState(raw) {
@@ -489,6 +508,13 @@ function seedState() {
       updatedAt: nowIso(),
     },
   )
+  // 种子条目同样走一次初判，新装的库里不会出现「全是无锚点」的情况
+  for (const item of state.items) {
+    const guessed = inferAnchor({ title: item.title, body: item.body, tags: item.tags })
+    item.anchorMode = guessed.mode
+    item.anchorSource = 'inferred'
+    item.anchorWhy = guessed.why
+  }
   return state
 }
 
@@ -801,6 +827,8 @@ function archiveView(state) {
     groupId: item.groupId,
     status: item.status,
     anchorMode: item.anchorMode,
+    anchorSource: item.anchorSource,
+    anchorWhy: item.anchorWhy ?? '',
     source: item.source,
     archivedAt: item.archivedAt,
     mergedInto: item.mergedInto ?? null,
@@ -864,6 +892,8 @@ function recycleView(state) {
     groupId: item.groupId,
     status: item.status,
     anchorMode: item.anchorMode,
+    anchorSource: item.anchorSource,
+    anchorWhy: item.anchorWhy ?? '',
     source: item.source,
     deletedAt: item.deletedAt,
   }))
@@ -1300,17 +1330,19 @@ async function runOp(op, payload) {
       const title = String(payload.title ?? '').trim()
       const body = String(payload.body ?? '')
       if (!title && !body.trim()) throw fail('标题和正文不能都为空')
+      const tags = normalizeTags(payload.tags)
+      const anchor = resolveAnchor(payload, title, body, tags)
       const item = {
         id: `m-${randomUUID().slice(0, 8)}`,
         title: title || '未命名记忆',
         body,
-        tags: normalizeTags(payload.tags),
+        tags,
         groupId: resolveGroupId(state, payload.groupId),
         enabled: payload.enabled !== false,
         pinned: payload.pinned === true,
         status: 'active',
         source: 'manual',
-        anchorMode: ['full', 'weight'].includes(payload.anchorMode) ? payload.anchorMode : 'off',
+        ...anchor,
         order: nextOrder(state.items),
         createdAt: nowIso(),
         updatedAt: nowIso(),
@@ -1323,6 +1355,7 @@ async function runOp(op, payload) {
     case 'item.update': {
       const item = requireItem(state, payload.id)
       const patch = payload.patch && typeof payload.patch === 'object' ? payload.patch : {}
+      const touchedContent = 'title' in patch || 'body' in patch || 'tags' in patch
       if ('title' in patch) {
         const title = String(patch.title ?? '').trim()
         if (!title) throw fail('标题不能为空')
@@ -1333,7 +1366,16 @@ async function runOp(op, payload) {
       if ('groupId' in patch) item.groupId = resolveGroupId(state, patch.groupId)
       if ('enabled' in patch) item.enabled = patch.enabled !== false
       if ('pinned' in patch) item.pinned = patch.pinned === true
-      if ('anchorMode' in patch) item.anchorMode = ['full', 'weight'].includes(patch.anchorMode) ? patch.anchorMode : 'off'
+      if ('anchorMode' in patch) {
+        item.anchorMode = ['full', 'weight'].includes(patch.anchorMode) ? patch.anchorMode : 'off'
+        item.anchorSource = 'user'
+        item.anchorWhy = '手动设置'
+      } else if (touchedContent && item.anchorSource === 'inferred') {
+        // 正文变了就重判一次，但只动「插件自己判的」；用户手动设过的一律不改
+        const guessed = inferAnchor({ title: item.title, body: item.body, tags: item.tags })
+        item.anchorMode = guessed.mode
+        item.anchorWhy = guessed.why
+      }
       if ('status' in patch) item.status = patch.status === 'pending' ? 'pending' : 'active'
       item.updatedAt = nowIso()
       await persist()
@@ -1357,7 +1399,11 @@ async function runOp(op, payload) {
         if ('pinned' in patch) item.pinned = patch.pinned === true
         if ('status' in patch) item.status = patch.status === 'pending' ? 'pending' : 'active'
         if ('groupId' in patch) item.groupId = resolveGroupId(state, patch.groupId)
-        if ('anchorMode' in patch) item.anchorMode = ['full', 'weight'].includes(patch.anchorMode) ? patch.anchorMode : 'off'
+        if ('anchorMode' in patch) {
+          item.anchorMode = ['full', 'weight'].includes(patch.anchorMode) ? patch.anchorMode : 'off'
+          item.anchorSource = 'user'
+          item.anchorWhy = '手动设置'
+        }
         // tags = 整组替换；addTags / removeTags = 在原有标签上增删，默认用后者以免误删分类。
         if (Array.isArray(patch.tags)) item.tags = normalizeTags(patch.tags)
         // 批量打标：把标签并到每条已有标签上，不覆盖用户原来的分类。
@@ -1375,6 +1421,36 @@ async function runOp(op, payload) {
       }
       await persist()
       return snapshot(state, sessionId, { message: `已更新 ${changed} 条记忆` })
+    }
+
+    case 'anchor.reinfer': {
+      // 按内容重判锚点：默认只动「插件自己判出来的」，force 时连用户手设的也覆盖。
+      const ids = Array.isArray(payload.ids) ? payload.ids.filter((id) => typeof id === 'string') : null
+      const force = payload.force === true
+      const tally = { full: 0, weight: 0, off: 0 }
+      let changed = 0
+      let skipped = 0
+      for (const item of state.items) {
+        if (item.deletedAt || item.archivedAt) continue
+        if (ids && !ids.includes(item.id)) continue
+        if (!force && item.anchorSource !== 'inferred') {
+          skipped += 1
+          continue
+        }
+        const guessed = inferAnchor({ title: item.title, body: item.body, tags: item.tags })
+        if (item.anchorMode !== guessed.mode || !item.anchorSource) {
+          item.anchorMode = guessed.mode
+          item.anchorSource = 'inferred'
+          item.anchorWhy = guessed.why
+          item.updatedAt = nowIso()
+          changed += 1
+        }
+        tally[guessed.mode] += 1
+      }
+      await persist()
+      return snapshot(state, sessionId, {
+        message: `已重判 ${changed} 条锚点（完全 ${tally.full} / 权重 ${tally.weight} / 不设 ${tally.off}${skipped ? `，跳过手设 ${skipped} 条` : ''}）`,
+      })
     }
 
     case 'item.delete': {
@@ -1890,6 +1966,12 @@ function registerTools(ctx) {
         title: { type: 'string', description: '一句话结论（不是分类名），便于用户扫读' },
         body: { type: 'string', description: '具体值、为什么、例外/边界；一条只讲一件事，可含 Markdown' },
         tags: { type: 'string', description: '可选：逗号分隔的标签（归类由用户自己拖进文件夹，无需填文件夹）' },
+        anchor: {
+          type: 'string',
+          enum: ['full', 'weight', 'off'],
+          description:
+            '可选：注入强度。full=完全锚点（必须照做的硬性约束），weight=权重锚点（偏好/惯例），off=不设锚点。一般不用传：插件会按内容自动初判（必须/禁止/只写…→完全；喜欢/尽量/统一…→权重），用户随时可在面板改。',
+        },
       },
       required: ['title', 'body'],
     },
@@ -1915,6 +1997,7 @@ function registerTools(ctx) {
         status: 'pending',
         source: 'auto',
         sessionId,
+        ...resolveAnchor({ anchorMode: args?.anchor }, title, body, tags),
         order: nextOrder(state.items),
         createdAt: nowIso(),
         updatedAt: nowIso(),
@@ -1940,7 +2023,11 @@ function registerTools(ctx) {
       await persist()
       const ordinal = sessionId ? state.items.filter((entry) => entry.sessionId === sessionId).length : 0
       const where = groupId ? `已连同本会话其它记忆放进文件夹「${groupNameOf(state, groupId)}」` : '放在「未归类」'
-      return `已写入待确认记忆「${item.title}」（本会话第 ${ordinal} 条，${where}）。请在「记忆」面板的「待确认」里审核：转正后才生效并参与注入。`
+      const anchorLabel =
+        item.anchorMode === 'full' ? '完全锚点（硬性）' : item.anchorMode === 'weight' ? '权重锚点（偏好）' : '不设锚点'
+      const anchorNote =
+        item.anchorSource === 'inferred' ? `锚点初判为${anchorLabel}：${item.anchorWhy}` : `锚点按你的指定设为${anchorLabel}`
+      return `已写入待确认记忆「${item.title}」（本会话第 ${ordinal} 条，${where}；${anchorNote}）。请在「记忆」面板的「待确认」里审核：转正后才生效并参与注入。`
     },
   })
 }

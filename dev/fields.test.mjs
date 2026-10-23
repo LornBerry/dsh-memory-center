@@ -198,6 +198,29 @@ expect('回收站条目保留 deletedAt', delItem.deletedAt, stamp)
 expect('统计不含已删/已归档', state.stats && state.stats.items, 0, 'm-live 是待确认，不计入活跃数')
 expect('待确认计数正确', state.stats && state.stats.pending, 1)
 
+/* 老数据没有 anchorSource：设过锚点的算用户手设（不能被自动覆盖），全是 off 的交给插件重判 */
+expect('旧条目的 full 锚点视为用户手设', live.anchorSource, 'user', 'anchorMode=full 且无 source 应记为 user')
+expect('旧条目的 weight 锚点视为用户手设', archItem.anchorSource, 'user', 'anchorMode=weight 且无 source 应记为 user')
+expect('旧条目的 off 锚点可被重判', delItem.anchorSource, 'inferred', 'anchorMode=off 且无 source 应可自动重判')
+
+/* 显式指定锚点时 source 记为 user，并写进理由 */
+const created = await call({ op: 'item.create', title: '显式锚点', body: '随便写点', anchorMode: 'weight' })
+const createdId = created.focusId
+const createdItem = (created.items || []).find((entry) => entry.id === createdId) || {}
+expect('显式指定锚点生效', createdItem.anchorMode, 'weight')
+expect('显式指定时来源为 user', createdItem.anchorSource, 'user')
+
+/* 内容改动会重判「初判」的条目，但不会覆盖用户手设 */
+await call({ op: 'item.update', id: createdId, patch: { body: '必须这么做，禁止那样做' } })
+const afterEdit = await call({ op: 'state' })
+const kept = (afterEdit.items || []).find((entry) => entry.id === createdId) || {}
+expect('用户手设的锚点不被正文改动覆盖', kept.anchorMode, 'weight', 'source=user 应保持原值')
+
+const inferOnce = await call({ op: 'anchor.reinfer', ids: [createdId], force: true })
+const forced = (inferOnce.items || []).find((entry) => entry.id === createdId) || {}
+expect('强制重判会更新锚点', forced.anchorMode, 'full', '正文里的必须/禁止应判 full')
+expect('强制重判后来源仍是 inferred', forced.anchorSource, 'inferred')
+
 await fs.rm(tmpRoot, { recursive: true, force: true })
 
 if (failures) {
