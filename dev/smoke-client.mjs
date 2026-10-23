@@ -160,7 +160,20 @@ const snapshot = {
     },
   ],
   tags: ['约束'],
-  stats: { groups: 2, items: 2, enabled: 2, pending: 1, pinned: 1 },
+  stats: { groups: 2, items: 2, enabled: 2, pending: 1, pinned: 1, deleted: 1 },
+  deleted: [
+    {
+      id: 'm-9',
+      title: '被删掉的旧记忆',
+      body: '误删之后应该能在回收站里捞回来',
+      tags: [],
+      groupId: null,
+      status: 'active',
+      anchorMode: 'off',
+      source: 'manual',
+      deletedAt: '2026-10-22T01:00:00.000Z',
+    },
+  ],
   session: { sessionId: 'smoke', decided: false, mode: 'none', groupIds: [], itemIds: [], count: 0, groupCount: 0 },
   preview: '## 用户长期记忆\n\n- 记忆数据放在 E 盘',
   sync: {
@@ -189,6 +202,8 @@ globalThis.fetch = async (url, init) => {
 
 const documentStub = {
   _nodes: new Map(),
+  addEventListener() {},
+  removeEventListener() {},
   getElementById(id) {
     return documentStub._nodes.get(id) || null
   },
@@ -288,6 +303,13 @@ const panelStates = [
   { label: ' pending', props: { debugFilter: '__pending' } },
   { label: ' storage', props: { debugStorage: true } },
   { label: ' sync', props: { debugSync: true } },
+  { label: ' list-view', props: { debugView: 'list' } },
+  { label: ' sort-updated', props: { debugSort: 'updated' } },
+  { label: ' recycle', props: { debugFilter: '__deleted' } },
+  {
+    label: ' bulk-confirm',
+    props: { debugSelected: ['m-1', 'm-9'], debugConfirm: { title: '删除选中的 2 条记忆？', message: '会先进入回收站', confirmLabel: '移入回收站', danger: true } },
+  },
 ]
 
 const panelStatesFor = (name) => (name === 'main' || name === 'settings.section' ? panelStates : [{ label: '', props: {} }])

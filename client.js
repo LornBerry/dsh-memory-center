@@ -133,6 +133,54 @@ window.__ModuleLoader__.load({
         .dmc-row.is-drop { outline: 2px dashed rgba(93,140,255,.8); outline-offset: -2px; background: rgba(93,140,255,.16); }
         .dmc-row-more { margin-left: auto; opacity: 0; }
         .dmc-row:hover .dmc-row-more, .dmc-row-more:focus { opacity: 1; }
+        /* 锚点徽标：硬性规则一眼可见（橙红），软性倾向用蓝绿 */
+        .dmc-tag.dmc-anchor-full { background: rgba(226,94,54,.22); color: inherit; box-shadow: inset 0 0 0 1px rgba(226,94,54,.55); font-weight: 600; }
+        .dmc-tag.dmc-anchor-weight { background: rgba(46,160,120,.20); color: inherit; box-shadow: inset 0 0 0 1px rgba(46,160,120,.45); }
+        .dmc-anchor-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
+        .dmc-anchor-dot.full { background: #e25e36; }
+        .dmc-anchor-dot.weight { background: #2ea078; }
+        /* Markdown 渲染 */
+        .dmc-md { font-size: 12px; line-height: 1.62; word-break: break-word; }
+        .dmc-md > :first-child { margin-top: 0; }
+        .dmc-md p { margin: 0 0 6px; }
+        .dmc-md h1, .dmc-md h2, .dmc-md h3, .dmc-md h4 { margin: 10px 0 4px; font-size: 13px; font-weight: 600; }
+        .dmc-md ul, .dmc-md ol { margin: 0 0 6px; padding-left: 18px; }
+        .dmc-md li { margin: 1px 0; }
+        .dmc-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; padding: 1px 4px; border-radius: 4px; background: rgba(127,127,127,.18); }
+        .dmc-md pre { margin: 6px 0; padding: 8px 10px; border-radius: 8px; background: rgba(127,127,127,.14); overflow: auto; }
+        .dmc-md pre code { background: none; padding: 0; }
+        .dmc-md blockquote { margin: 6px 0; padding: 2px 10px; border-left: 3px solid rgba(127,127,127,.4); opacity: .85; }
+        .dmc-md a { color: #5d8cff; text-decoration: none; }
+        .dmc-md a:hover { text-decoration: underline; }
+        .dmc-md hr { border: 0; border-top: 1px solid rgba(127,127,127,.3); margin: 8px 0; }
+        /* 底部批量操作栏（吸底） */
+        .dmc-bottom-bar { position: sticky; bottom: 0; z-index: 30; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 10px; margin: 0 14px 10px; border-radius: 10px; background: rgba(93,140,255,.16); border: 1px solid rgba(93,140,255,.45); backdrop-filter: blur(6px); box-shadow: 0 -6px 18px rgba(0,0,0,.12); }
+        .dmc-bottom-bar strong { margin-right: 2px; }
+        /* 视图切换 + 排序 */
+        .dmc-toolbar-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+        .dmc-icon-group { display: inline-flex; border: 1px solid rgba(127,127,127,.3); border-radius: 8px; overflow: hidden; }
+        .dmc-icon-btn { background: none; border: 0; padding: 4px 9px; font: inherit; font-size: 12px; color: inherit; cursor: pointer; opacity: .65; }
+        .dmc-icon-btn.is-active { background: rgba(93,140,255,.22); opacity: 1; }
+        .dmc-sort { font-size: 12px; padding: 4px 6px; border-radius: 8px; border: 1px solid rgba(127,127,127,.3); background: transparent; color: inherit; }
+        /* 列表视图 */
+        .dmc-listview .dmc-item { padding: 5px 10px; margin-bottom: 3px; }
+        .dmc-listview .dmc-item-body, .dmc-listview .dmc-tags { display: none; }
+        .dmc-listview .dmc-actions { display: none; }
+        .dmc-listview .dmc-item-head { gap: 8px; }
+        .dmc-listview .dmc-item-title { flex: 0 1 auto; }
+        .dmc-list-meta { font-size: 11px; opacity: .55; margin-left: auto; white-space: nowrap; }
+        /* 空状态 */
+        .dmc-empty-state { margin: 28px auto; max-width: 420px; text-align: center; }
+        .dmc-empty-state .dmc-empty-art { font-size: 34px; opacity: .5; }
+        .dmc-empty-state .dmc-empty-title { margin: 10px 0 4px; font-weight: 600; }
+        .dmc-empty-state .dmc-empty-hint { opacity: .65; font-size: 12px; line-height: 1.7; }
+        .dmc-empty-state .dmc-empty-actions { margin-top: 12px; display: flex; gap: 6px; justify-content: center; flex-wrap: wrap; }
+        /* 搜索命中高亮 */
+        .dmc-hl { background: rgba(255,214,64,.35); border-radius: 3px; padding: 0 1px; }
+        /* 回收站 */
+        .dmc-item.is-deleted { opacity: .75; border-style: dashed; }
+        .dmc-md-preview { border: 1px solid rgba(127,127,127,.25); border-radius: 8px; padding: 8px 10px; min-height: 96px; max-height: 260px; overflow: auto; background: rgba(127,127,127,.06); }
+        .dmc-editor-tabs { display: flex; gap: 6px; margin-bottom: 6px; }
         .dmc-menu { position: fixed; min-width: 176px; padding: 4px; border-radius: 10px; border: 1px solid rgba(127,127,127,.32); background: var(--dsh-popover-bg, #1f2126); color: var(--dsh-popover-fg, #e6e6e6); box-shadow: 0 14px 36px rgba(0,0,0,.36); z-index: 600; }
         .dmc-menu-item { display: block; width: 100%; text-align: left; background: none; border: 0; color: inherit; font: inherit; padding: 6px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
         .dmc-menu-item:hover { background: rgba(127,127,127,.18); }
@@ -259,6 +307,224 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /* ------------------------------------------------------- markdown / 高亮 */
+
+    /**
+     * 极简 Markdown 渲染：只支持记忆正文里真正会用到的那几种写法。
+     * 全部用 React 元素拼出来，不碰 innerHTML，避免记忆内容里带 HTML 时被浏览器执行。
+     */
+    function renderInline(text, keyPrefix) {
+      const nodes = []
+      const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*\s][^*]*\*|\[[^\]]+\]\([^)\s]+\))/g
+      let last = 0
+      let match
+      let index = 0
+      while ((match = pattern.exec(text))) {
+        if (match.index > last) nodes.push(text.slice(last, match.index))
+        const token = match[0]
+        const key = `${keyPrefix}-${index++}`
+        if (token.startsWith('**')) nodes.push(h('strong', { key }, token.slice(2, -2)))
+        else if (token.startsWith('`')) nodes.push(h('code', { key }, token.slice(1, -1)))
+        else if (token.startsWith('[')) {
+          const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(token)
+          nodes.push(
+            h('a', { key, href: link[2], target: '_blank', rel: 'noreferrer noopener' }, link[1]),
+          )
+        } else nodes.push(h('em', { key }, token.slice(1, -1)))
+        last = match.index + token.length
+      }
+      if (last < text.length) nodes.push(text.slice(last))
+      return nodes
+    }
+
+    function renderMarkdown(text) {
+      const source = String(text ?? '')
+      if (!source.trim()) return [h('p', { key: 'empty', className: 'dmc-card-hint' }, '（空）')]
+      const blocks = []
+      const lines = source.split(/\r?\n/)
+      let i = 0
+      let key = 0
+      const startOfBlock = (line) => /^\s*(```|#{1,4}\s|[-*+]\s|\d+[.)]\s|>|---|\*\*\*|___)/.test(line)
+      while (i < lines.length) {
+        const line = lines[i]
+        if (/^\s*```/.test(line)) {
+          const buffer = []
+          i += 1
+          while (i < lines.length && !/^\s*```/.test(lines[i])) {
+            buffer.push(lines[i])
+            i += 1
+          }
+          i += 1
+          blocks.push(h('pre', { key: `pre-${key++}` }, h('code', null, buffer.join('\n'))))
+          continue
+        }
+        if (!line.trim()) {
+          i += 1
+          continue
+        }
+        const heading = /^(#{1,4})\s+(.*)$/.exec(line)
+        if (heading) {
+          blocks.push(h(`h${heading[1].length}`, { key: `h-${key++}` }, ...renderInline(heading[2], `hi-${key}`)))
+          i += 1
+          continue
+        }
+        if (/^\s*([-*+])\s+/.test(line)) {
+          const items = []
+          while (i < lines.length && /^\s*([-*+])\s+/.test(lines[i])) {
+            items.push(h('li', { key: `li-${key++}` }, ...renderInline(lines[i].replace(/^\s*([-*+])\s+/, ''), `lii-${key}`)))
+            i += 1
+          }
+          blocks.push(h('ul', { key: `ul-${key++}` }, ...items))
+          continue
+        }
+        if (/^\s*\d+[.)]\s+/.test(line)) {
+          const items = []
+          while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) {
+            items.push(h('li', { key: `oli-${key++}` }, ...renderInline(lines[i].replace(/^\s*\d+[.)]\s+/, ''), `olii-${key}`)))
+            i += 1
+          }
+          blocks.push(h('ol', { key: `ol-${key++}` }, ...items))
+          continue
+        }
+        if (/^\s*>\s?/.test(line)) {
+          const buffer = []
+          while (i < lines.length && /^\s*>\s?/.test(lines[i])) {
+            buffer.push(lines[i].replace(/^\s*>\s?/, ''))
+            i += 1
+          }
+          blocks.push(h('blockquote', { key: `bq-${key++}` }, ...renderInline(buffer.join('\n'), `bqi-${key}`)))
+          continue
+        }
+        if (/^\s*(---|\*\*\*|___)\s*$/.test(line)) {
+          blocks.push(h('hr', { key: `hr-${key++}` }))
+          i += 1
+          continue
+        }
+        const buffer = []
+        while (i < lines.length && lines[i].trim() && !startOfBlock(lines[i])) {
+          buffer.push(lines[i])
+          i += 1
+        }
+        blocks.push(h('p', { key: `p-${key++}` }, ...renderInline(buffer.join('\n'), `pi-${key}`)))
+      }
+      return blocks
+    }
+
+    /** 搜索命中高亮：只包一层 <mark> 样式的 span，依然不碰 HTML。 */
+    function highlightNodes(text, query) {
+      const source = String(text ?? '')
+      const needle = String(query ?? '').trim()
+      if (!needle) return [source]
+      const nodes = []
+      const lower = source.toLowerCase()
+      const target = needle.toLowerCase()
+      let at = lower.indexOf(target)
+      let last = 0
+      let index = 0
+      while (at >= 0) {
+        if (at > last) nodes.push(source.slice(last, at))
+        nodes.push(h('span', { key: `hl-${index++}`, className: 'dmc-hl' }, source.slice(at, at + needle.length)))
+        last = at + needle.length
+        at = lower.indexOf(target, last)
+      }
+      if (last < source.length) nodes.push(source.slice(last))
+      return nodes
+    }
+
+    function ConfirmDialog({ title, message, detail, confirmLabel, danger, onConfirm, onClose }) {
+      const [busy, setBusy] = useState(false)
+      const go = async () => {
+        setBusy(true)
+        try {
+          await onConfirm()
+        } finally {
+          setBusy(false)
+          onClose()
+        }
+      }
+      return h(
+        Modal,
+        {
+          title: title || '请确认',
+          onClose,
+          footer: [
+            h('button', { key: 'cancel', className: 'dmc-btn', onClick: onClose, disabled: busy }, '取消'),
+            h(
+              'button',
+              {
+                key: 'ok',
+                className: danger ? 'dmc-btn danger' : 'dmc-btn primary',
+                onClick: go,
+                disabled: busy,
+              },
+              busy ? '处理中…' : confirmLabel || '确定',
+            ),
+          ],
+        },
+        h('div', { style: { fontSize: '13px', lineHeight: '1.7' } }, message),
+        detail ? h('div', { className: 'dmc-card-hint', style: { marginTop: '8px' } }, detail) : null,
+      )
+    }
+
+    function TagDialog({ count, suggestions, onSubmit, onClose }) {
+      const [text, setText] = useState('')
+      const tags = text
+        .split(/[,，、]/)
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+      return h(
+        Modal,
+        {
+          title: `给 ${count} 条记忆打标`,
+          onClose,
+          footer: [
+            h('button', { key: 'cancel', className: 'dmc-btn', onClick: onClose }, '取消'),
+            h(
+              'button',
+              { key: 'ok', className: 'dmc-btn primary', disabled: !tags.length, onClick: () => onSubmit(tags) },
+              '添加标签',
+            ),
+          ],
+        },
+        h(
+          'div',
+          { className: 'dmc-field' },
+          h('label', null, '标签（逗号分隔；会并到每条已有标签上，不覆盖原来的）'),
+          h('input', {
+            className: 'dmc-input',
+            value: text,
+            onChange: (event) => setText(event.target.value),
+            placeholder: '例如：项目约定, 数据库',
+          }),
+          suggestions && suggestions.length
+            ? h(
+                'div',
+                { className: 'dmc-suggest' },
+                suggestions.slice(0, 16).map((tag) =>
+                  h(
+                    'span',
+                    {
+                      key: tag,
+                      className: 'dmc-tag',
+                      onClick: () =>
+                        setText((current) => {
+                          const list = current
+                            .split(/[,，、]/)
+                            .map((entry) => entry.trim())
+                            .filter(Boolean)
+                          if (!list.some((entry) => entry.toLowerCase() === tag.toLowerCase())) list.push(tag)
+                          return list.join(', ')
+                        }),
+                    },
+                    tag,
+                  ),
+                ),
+              )
+            : null,
+        ),
+      )
+    }
+
     function ItemEditor({ data, item, onClose }) {
       const [title, setTitle] = useState(item ? item.title : '')
       const [body, setBody] = useState(item ? item.body : '')
@@ -267,6 +533,7 @@ window.__ModuleLoader__.load({
       const [pinned, setPinned] = useState(item ? item.pinned : false)
       const [enabled, setEnabled] = useState(item ? item.enabled : true)
       const [anchorMode, setAnchorMode] = useState(item ? item.anchorMode || 'off' : 'off')
+      const [pane, setPane] = useState('edit')
 
       const save = async () => {
         const tags = tagText
@@ -299,8 +566,42 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'dmc-field' },
-          h('label', null, '内容（支持换行，尽量写清楚为什么）'),
-          h('textarea', { className: 'dmc-textarea', value: body, onChange: (event) => setBody(event.target.value) }),
+          h(
+            'div',
+            { className: 'dmc-card-row' },
+            h('label', { style: { margin: 0 } }, '内容（支持 Markdown：标题 / 列表 / 加粗 / 代码块 / 链接）'),
+            h(
+              'div',
+              { className: 'dmc-editor-tabs', style: { marginLeft: 'auto', marginBottom: 0 } },
+              h(
+                'button',
+                {
+                  className: pane === 'edit' ? 'dmc-btn primary' : 'dmc-btn',
+                  onClick: () => setPane('edit'),
+                },
+                '编辑',
+              ),
+              h(
+                'button',
+                {
+                  className: pane === 'preview' ? 'dmc-btn primary' : 'dmc-btn',
+                  onClick: () => setPane('preview'),
+                },
+                '预览',
+              ),
+            ),
+          ),
+          pane === 'edit'
+            ? h('textarea', {
+                className: 'dmc-textarea',
+                value: body,
+                onChange: (event) => setBody(event.target.value),
+                placeholder: '写清楚具体内容与原因；支持 **加粗**、- 列表、`代码`、```代码块```',
+              })
+            : h('div', { className: 'dmc-md-preview dmc-md' }, ...renderMarkdown(body)),
+          pane === 'edit'
+            ? h('div', { className: 'dmc-card-hint' }, '切到「预览」可以看渲染效果；保存后条目卡片里也会按 Markdown 显示。')
+            : null,
         ),
         h(
           'div',
@@ -1056,6 +1357,11 @@ window.__ModuleLoader__.load({
       const [dropKey, setDropKey] = useState(null)
       const [storageOpen, setStorageOpen] = useState((props && props.debugStorage) || false)
       const [syncOpen, setSyncOpen] = useState((props && props.debugSync) || false)
+      const [sortKey, setSortKey] = useState((props && props.debugSort) || 'manual')
+      const [sortDir, setSortDir] = useState('desc')
+      const [view, setView] = useState((props && props.debugView) || 'card')
+      const [confirmAsk, setConfirmAsk] = useState((props && props.debugConfirm) || null)
+      const [tagging, setTagging] = useState(null)
 
       useEffect(() => {
         refresh(activeSessionId)
@@ -1070,16 +1376,43 @@ window.__ModuleLoader__.load({
       }
 
       const pendingCount = data.stats.pending
-      const filtered = data.items.filter((item) => {
-        if (filter === '__pending' && item.status !== 'pending') return false
-        if (filter === '__ungrouped' && item.groupId) return false
-        if (filter !== '__all' && filter !== '__pending' && filter !== '__ungrouped' && item.groupId !== filter) return false
+      const deletedItems = data.deleted || []
+      const recycleMode = filter === '__deleted'
+      const pool = recycleMode ? deletedItems : data.items
+      const filtered = pool.filter((item) => {
+        if (recycleMode) {
+          // 回收站里只按关键词过滤，不再套文件夹/待确认条件。
+        } else {
+          if (filter === '__pending' && item.status !== 'pending') return false
+          if (filter === '__ungrouped' && item.groupId) return false
+          if (filter !== '__all' && filter !== '__pending' && filter !== '__ungrouped' && item.groupId !== filter) return false
+        }
         if (query.trim()) {
           const haystack = `${item.title}\n${item.body}\n${item.tags.join(' ')}`.toLowerCase()
           if (!haystack.includes(query.trim().toLowerCase())) return false
         }
         return true
       })
+
+      // 排序：默认按手动顺序（拖拽/顺序字段），也可以按时间找“刚加的那条”。
+      const sorted = (() => {
+        const list = [...filtered]
+        if (sortKey === 'updated' || sortKey === 'created') {
+          const field = sortKey === 'updated' ? 'updatedAt' : 'createdAt'
+          list.sort((a, b) => {
+            if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+            return String(a[field] || '').localeCompare(String(b[field] || ''))
+          })
+          if (sortDir === 'desc') list.reverse()
+          return list
+        }
+        if (sortKey === 'title') {
+          list.sort((a, b) => String(a.title).localeCompare(String(b.title), 'zh-CN'))
+          if (sortDir === 'desc') list.reverse()
+          return list
+        }
+        return list
+      })()
 
       const pendingItems = data.items.filter((item) => item.status === 'pending')
 
@@ -1090,7 +1423,9 @@ window.__ModuleLoader__.load({
             ? '待确认'
             : filter === '__ungrouped'
               ? '未归类'
-              : (data.groups.find((group) => group.id === filter) || {}).name || '全部记忆'
+              : filter === '__deleted'
+                ? '回收站'
+                : (data.groups.find((group) => group.id === filter) || {}).name || '全部记忆'
 
       const toggleSelect = (id) =>
         setSelected((prev) => (prev.includes(id) ? prev.filter((entry) => entry !== id) : [...prev, id]))
@@ -1233,7 +1568,13 @@ window.__ModuleLoader__.load({
                 row(
                   '删除',
                   async () => {
-                    if (window.confirm(`删除记忆「${item.title}」？`)) await run('item.delete', { ids: [item.id] })
+                    setConfirmAsk({
+                      title: '删除这条记忆？',
+                      message: `「${item.title}」会先进入回收站，之后还能恢复。`,
+                      confirmLabel: '移入回收站',
+                      danger: true,
+                      onConfirm: () => run('item.delete', { ids: [item.id] }),
+                    })
                   },
                   true,
                 ),
@@ -1257,6 +1598,155 @@ window.__ModuleLoader__.load({
         )
       }
 
+      const anchorTag = (item) =>
+        item.anchorMode === 'full'
+          ? h('span', { className: 'dmc-tag dmc-anchor-full' }, '完全锚点')
+          : item.anchorMode === 'weight'
+            ? h('span', { className: 'dmc-tag dmc-anchor-weight' }, '权重锚点')
+            : null
+
+      const renderItem = (item) => {
+        const listMode = view === 'list'
+        const stamp = String(item.updatedAt || item.createdAt || '').replace('T', ' ').slice(0, 16)
+        const isDeleted = Boolean(item.deletedAt) || recycleMode
+        return h(
+          'div',
+          {
+            key: item.id,
+            className: `dmc-item${item.enabled ? '' : ' is-off'}${item.status === 'pending' ? ' is-pending' : ''}${
+              selected.includes(item.id) ? ' is-selected' : ''
+            }${isDeleted ? ' is-deleted' : ''}`,
+            draggable: !isDeleted,
+            onDragStart: (event) => {
+              if (isDeleted) return
+              const ids = selected.includes(item.id) ? selected : [item.id]
+              setDragIds(ids)
+              if (event.dataTransfer) {
+                event.dataTransfer.setData('text/plain', ids.join(','))
+                event.dataTransfer.effectAllowed = 'move'
+              }
+            },
+            onDragEnd: () => setDragIds([]),
+            onContextMenu: isDeleted ? undefined : (event) => openMenu(event, 'item', item.id),
+          },
+          h(
+            'div',
+            { className: 'dmc-item-head' },
+            h('input', {
+              type: 'checkbox',
+              className: 'dmc-check',
+              checked: selected.includes(item.id),
+              onChange: () => toggleSelect(item.id),
+            }),
+            item.anchorMode === 'full' ? h('span', { className: 'dmc-anchor-dot full', title: '完全锚点（硬性）' }) : null,
+            item.anchorMode === 'weight' ? h('span', { className: 'dmc-anchor-dot weight', title: '权重锚点（软性）' }) : null,
+            h('span', { className: 'dmc-item-title' }, `${item.pinned ? '📌 ' : ''}`, ...highlightNodes(item.title, query)),
+            !listMode ? h('span', { className: 'dmc-tag' }, groupName(data, item.groupId)) : null,
+            item.status === 'pending' ? h('span', { className: 'dmc-tag' }, '待确认') : null,
+            listMode ? h('span', { className: 'dmc-tag' }, groupName(data, item.groupId)) : null,
+            listMode ? null : anchorTag(item),
+            listMode
+              ? h('span', { className: 'dmc-list-meta' }, `${item.enabled ? '' : '已停用 · '}${stamp}`)
+              : h('span', { className: 'dmc-tag' }, item.source === 'auto' ? '模型写入' : item.source === 'import' ? '导入' : '手动'),
+          ),
+          !listMode && item.tags.length
+            ? h('div', { className: 'dmc-tags' }, item.tags.map((tag) => h('span', { key: tag, className: 'dmc-tag' }, tag)))
+            : null,
+          listMode
+            ? null
+            : query.trim()
+              ? h('div', { className: 'dmc-item-body' }, ...highlightNodes((item.body || '').slice(0, 260), query))
+              : h('div', { className: 'dmc-item-body dmc-md' }, ...renderMarkdown(item.body)),
+          h(
+            'div',
+            { className: 'dmc-actions' },
+            isDeleted
+              ? h('button', { className: 'dmc-btn primary', onClick: () => run('item.restore', { ids: [item.id] }) }, '恢复')
+              : [
+                  item.status === 'pending'
+                    ? h('button', { key: 'confirm', className: 'dmc-btn primary', onClick: () => run('item.confirm', { ids: [item.id] }) }, '转正')
+                    : null,
+                  h('button', { key: 'edit', className: 'dmc-btn', onClick: () => setEditing(item) }, '编辑'),
+                  h(
+                    'button',
+                    { key: 'more', className: 'dmc-btn', onClick: (event) => openMenuAtButton(event, 'item', item.id) },
+                    '更多…',
+                  ),
+                ],
+            isDeleted
+              ? h(
+                  'button',
+                  {
+                    className: 'dmc-btn danger',
+                    onClick: () =>
+                      setConfirmAsk({
+                        title: '彻底删除这条记忆？',
+                        message: `「${item.title}」将被永久删除，回收站里也无法恢复。`,
+                        confirmLabel: '彻底删除',
+                        danger: true,
+                        onConfirm: () => run('recycle.purge', { ids: [item.id] }),
+                      }),
+                  },
+                  '彻底删除',
+                )
+              : null,
+          ),
+        )
+      }
+
+      const emptyState = () => {
+        if (query.trim()) {
+          return h(
+            'div',
+            { className: 'dmc-empty-state' },
+            h('div', { className: 'dmc-empty-art' }, '🔍'),
+            h('div', { className: 'dmc-empty-title' }, `没有匹配「${query.trim()}」的记忆`),
+            h('div', { className: 'dmc-empty-hint' }, '换个关键词试试，或者清空搜索框看全部。'),
+            h(
+              'div',
+              { className: 'dmc-empty-actions' },
+              h('button', { className: 'dmc-btn', onClick: () => setQuery('') }, '清空搜索'),
+            ),
+          )
+        }
+        if (recycleMode) {
+          return h(
+            'div',
+            { className: 'dmc-empty-state' },
+            h('div', { className: 'dmc-empty-art' }, '🗑'),
+            h('div', { className: 'dmc-empty-title' }, '回收站是空的'),
+            h('div', { className: 'dmc-empty-hint' }, '删除记忆时它会先来这里待着，随时可以恢复。'),
+          )
+        }
+        if (filter === '__pending') {
+          return h(
+            'div',
+            { className: 'dmc-empty-state' },
+            h('div', { className: 'dmc-empty-art' }, '✅'),
+            h('div', { className: 'dmc-empty-title' }, '没有待确认的记忆'),
+            h('div', { className: 'dmc-empty-hint' }, '模型写入的记忆会先落到这里，等你点「转正」才生效。'),
+          )
+        }
+        const folderName = filter === '__all' || filter === '__ungrouped' ? '这里' : `「${currentName}」里`
+        return h(
+          'div',
+          { className: 'dmc-empty-state' },
+          h('div', { className: 'dmc-empty-art' }, '📂'),
+          h('div', { className: 'dmc-empty-title' }, `${folderName}空空如也`),
+          h(
+            'div',
+            { className: 'dmc-empty-hint' },
+            '可以把别处的记忆卡片拖到这里，或者点右上角「+ 新建记忆」写一条。',
+          ),
+          h(
+            'div',
+            { className: 'dmc-empty-actions' },
+            h('button', { className: 'dmc-btn primary', onClick: () => setCreating(true) }, '+ 新建记忆'),
+            h('button', { className: 'dmc-btn', onClick: () => setImporting(true) }, '导入'),
+          ),
+        )
+      }
+
       return h(
         'div',
         { className: panelClass },
@@ -1275,6 +1765,7 @@ window.__ModuleLoader__.load({
             navRow('__all', '全部记忆', data.stats.items),
             navRow('__pending', '待确认', pendingCount),
             navRow('__ungrouped', '未归类', data.items.filter((item) => !item.groupId && item.status === 'active').length, null),
+            navRow('__deleted', '回收站', data.stats.deleted || 0, undefined),
             h('div', { className: 'dmc-nav-head' }, h('span', { className: 'dmc-card-hint' }, '文件夹')),
             ...data.groups.map((group) =>
               h(
@@ -1352,6 +1843,47 @@ window.__ModuleLoader__.load({
             embedded
               ? null
               : h('button', { className: 'dmc-btn', onClick: () => openPanel(null) }, '返回对话'),
+            h(
+              'div',
+              { className: 'dmc-toolbar-right' },
+              h(
+                'select',
+                {
+                  className: 'dmc-sort',
+                  value: sortKey,
+                  title: '排序方式',
+                  onChange: (event) => setSortKey(event.target.value),
+                },
+                h('option', { value: 'manual' }, '默认顺序'),
+                h('option', { value: 'updated' }, '最近修改'),
+                h('option', { value: 'created' }, '最近创建'),
+                h('option', { value: 'title' }, '按标题'),
+              ),
+              h(
+                'button',
+                {
+                  className: 'dmc-icon-btn',
+                  style: { border: '1px solid rgba(127,127,127,.3)', borderRadius: '8px' },
+                  title: sortDir === 'desc' ? '当前从新到旧，点击切换' : '当前从旧到新，点击切换',
+                  onClick: () => setSortDir((value) => (value === 'desc' ? 'asc' : 'desc')),
+                },
+                sortDir === 'desc' ? '↓' : '↑',
+              ),
+              h(
+                'div',
+                { className: 'dmc-icon-group', title: '视图：卡片看长文，列表看标题' },
+                h(
+                  'button',
+                  { className: view === 'card' ? 'dmc-icon-btn is-active' : 'dmc-icon-btn', onClick: () => setView('card') },
+                  '卡片',
+                ),
+                h(
+                  'button',
+                  { className: view === 'list' ? 'dmc-icon-btn is-active' : 'dmc-icon-btn', onClick: () => setView('list') },
+                  '列表',
+                ),
+              ),
+            ),
           ),
           state.error ? h('div', { className: 'dmc-error' }, state.error) : null,
           state.message ? h('div', { className: 'dmc-ok' }, state.message) : null,
@@ -1413,155 +1945,200 @@ window.__ModuleLoader__.load({
                 ),
                 h('button', {
                   className: 'dmc-btn danger',
-                  onClick: async () => {
-                    if (!window.confirm(`删除全部 ${pendingItems.length} 条待确认记忆？`)) return
-                    await run('item.delete', { ids: pendingItems.map((item) => item.id) })
-                  },
+                  onClick: () =>
+                    setConfirmAsk({
+                      title: `删除全部 ${pendingItems.length} 条待确认记忆？`,
+                      message: '它们会先进入回收站，之后还能恢复。',
+                      confirmLabel: '全部移入回收站',
+                      danger: true,
+                      onConfirm: () => run('item.delete', { ids: pendingItems.map((item) => item.id) }),
+                    }),
                 }, '全部删除'),
                 h('span', { className: 'dmc-card-hint' }, '待确认的记忆不会参与注入，转正后才生效。'),
               )
             : null,
-          selected.length
+          recycleMode && deletedItems.length
             ? h(
                 'div',
-                { className: 'dmc-batch' },
-                h('strong', null, `已选 ${selected.length} 条`),
+                { className: 'dmc-bottom-bar' },
+                h('strong', null, `回收站 ${deletedItems.length} 条`),
                 h(
-                  'select',
+                  'button',
                   {
-                    className: 'dmc-select',
-                    style: { width: 'auto' },
-                    value: '',
-                    onChange: (event) => {
-                      if (!event.target.value) return
-                      moveTo(selected, event.target.value === '__none' ? null : event.target.value)
-                      event.target.value = ''
-                    },
+                    className: 'dmc-btn',
+                    disabled: !selected.length,
+                    onClick: () =>
+                      setConfirmAsk({
+                        title: `恢复选中的 ${selected.length} 条记忆？`,
+                        message: '恢复后会回到原来的文件夹；如果是启用状态，会重新参与注入。',
+                        confirmLabel: '恢复',
+                        onConfirm: async () => {
+                          await run('item.restore', { ids: selected })
+                          clearSelect()
+                        },
+                      }),
                   },
-                  h('option', { value: '' }, '移动到…'),
-                  h('option', { value: '__none' }, '未归类'),
-                  ...data.groups.map((group) => h('option', { key: group.id, value: group.id }, group.name)),
+                  `恢复选中${selected.length ? `（${selected.length}）` : ''}`,
                 ),
-                h('button', { className: 'dmc-btn', onClick: () => batchPatch(selected, { enabled: false }) }, '停用'),
-                h('button', { className: 'dmc-btn', onClick: () => batchPatch(selected, { enabled: true }) }, '启用'),
-                h('button', { className: 'dmc-btn', onClick: () => batchPatch(selected, { pinned: true }) }, '置顶'),
-                selected.some((id) => (data.items.find((item) => item.id === id) || {}).status === 'pending')
-                  ? h(
-                      'button',
-                      {
-                        className: 'dmc-btn primary',
-                        onClick: async () => {
-                          await run('item.confirm', { ids: selected })
-                          clearSelect()
-                        },
-                      },
-                      '转正',
-                    )
-                  : null,
-                activeSessionId
-                  ? h(
-                      'button',
-                      {
-                        className: 'dmc-btn',
-                        onClick: async () => {
-                          await run('session.add', { sessionId: activeSessionId, itemIds: selected })
-                          clearSelect()
-                        },
-                      },
-                      '加入本会话',
-                    )
-                  : null,
                 h(
                   'button',
                   {
                     className: 'dmc-btn danger',
-                    onClick: async () => {
-                      if (!window.confirm(`删除选中的 ${selected.length} 条记忆？`)) return
-                      await run('item.delete', { ids: selected })
-                      clearSelect()
-                    },
+                    disabled: !selected.length,
+                    onClick: () =>
+                      setConfirmAsk({
+                        title: `彻底删除选中的 ${selected.length} 条？`,
+                        message: '这次会真的从 store.json 里删掉，回收站也找不回来。',
+                        confirmLabel: '彻底删除',
+                        danger: true,
+                        onConfirm: async () => {
+                          await run('recycle.purge', { ids: selected })
+                          clearSelect()
+                        },
+                      }),
                   },
-                  '删除',
+                  '彻底删除',
                 ),
-                h('button', { className: 'dmc-btn', onClick: clearSelect }, '取消'),
+                h(
+                  'button',
+                  {
+                    className: 'dmc-btn',
+                    onClick: () =>
+                      setConfirmAsk({
+                        title: '清空回收站？',
+                        message: `回收站里的 ${deletedItems.length} 条记忆会被永久删除，无法恢复。`,
+                        confirmLabel: '清空回收站',
+                        danger: true,
+                        onConfirm: () => run('recycle.purge', { all: true }),
+                      }),
+                  },
+                  '清空回收站',
+                ),
+                h('button', { className: 'dmc-btn', onClick: clearSelect }, '取消选择'),
               )
-            : null,
+            : selected.length
+              ? h(
+                  'div',
+                  { className: 'dmc-bottom-bar' },
+                  h('strong', null, `已选 ${selected.length} 条`),
+                  h(
+                    'select',
+                    {
+                      className: 'dmc-select',
+                      style: { width: 'auto' },
+                      value: '',
+                      onChange: (event) => {
+                        if (!event.target.value) return
+                        moveTo(selected, event.target.value === '__none' ? null : event.target.value)
+                        event.target.value = ''
+                      },
+                    },
+                    h('option', { value: '' }, '移动到…'),
+                    h('option', { value: '__none' }, '未归类'),
+                    ...data.groups.map((group) => h('option', { key: group.id, value: group.id }, group.name)),
+                  ),
+                  h('button', { className: 'dmc-btn', onClick: () => setTagging({ ids: selected }) }, '打标'),
+                  h('button', { className: 'dmc-btn', onClick: () => batchPatch(selected, { enabled: false }) }, '停用'),
+                  h('button', { className: 'dmc-btn', onClick: () => batchPatch(selected, { enabled: true }) }, '启用'),
+                  h('button', { className: 'dmc-btn', onClick: () => batchPatch(selected, { pinned: true }) }, '置顶'),
+                  selected.some((id) => (data.items.find((item) => item.id === id) || {}).status === 'pending')
+                    ? h(
+                        'button',
+                        {
+                          className: 'dmc-btn primary',
+                          onClick: () =>
+                            setConfirmAsk({
+                              title: `把这 ${selected.length} 条转为正式记忆？`,
+                              message: '转正后它们会进入正式库，并按启用状态参与注入。',
+                              confirmLabel: '全部转正',
+                              onConfirm: async () => {
+                                await run('item.confirm', { ids: selected })
+                                clearSelect()
+                              },
+                            }),
+                        },
+                        '转正',
+                      )
+                    : null,
+                  activeSessionId
+                    ? h(
+                        'button',
+                        {
+                          className: 'dmc-btn',
+                          onClick: async () => {
+                            await run('session.add', { sessionId: activeSessionId, itemIds: selected })
+                            clearSelect()
+                          },
+                        },
+                        '加入本会话',
+                      )
+                    : null,
+                  h(
+                    'button',
+                    {
+                      className: 'dmc-btn danger',
+                      onClick: () =>
+                        setConfirmAsk({
+                          title: `删除选中的 ${selected.length} 条记忆？`,
+                          message: `这 ${selected.length} 条会先进入「回收站」，之后还能恢复。`,
+                          detail: '确认后：从当前列表移除，但数据仍保存在 store.json 里。',
+                          confirmLabel: '移入回收站',
+                          danger: true,
+                          onConfirm: async () => {
+                            await run('item.delete', { ids: selected })
+                            clearSelect()
+                          },
+                        }),
+                    },
+                    '删除',
+                  ),
+                  h('button', { className: 'dmc-btn', onClick: clearSelect }, '取消'),
+                )
+              : null,
           h(
             'div',
-            { className: 'dmc-list' },
-            filtered.length
+            { className: `dmc-list${view === 'list' ? ' dmc-listview' : ''}` },
+            !recycleMode && sorted.length
               ? h(
                   'div',
                   { className: 'dmc-card-row', style: { marginBottom: '6px' } },
                   h('input', {
                     type: 'checkbox',
                     className: 'dmc-check',
-                    checked: selected.length > 0 && selected.length === filtered.length,
-                    onChange: (event) => (event.target.checked ? setSelected(filtered.map((item) => item.id)) : clearSelect()),
+                    checked: selected.length > 0 && selected.length === sorted.length,
+                    onChange: (event) => (event.target.checked ? setSelected(sorted.map((item) => item.id)) : clearSelect()),
                   }),
                   h('span', { className: 'dmc-card-hint' }, '全选'),
-                  h('span', { className: 'dmc-card-hint' }, '（勾选后可批量移动 / 停用 / 删除，也可以直接把卡片拖到左侧文件夹）'),
+                  h('span', { className: 'dmc-card-hint' }, '（勾选后底部会出现批量操作条；也可以直接把卡片拖到左侧文件夹）'),
                 )
               : null,
-            filtered.length
-              ? filtered.map((item) =>
-                  h(
-                    'div',
-                    {
-                      key: item.id,
-                      className: `dmc-item${item.enabled ? '' : ' is-off'}${item.status === 'pending' ? ' is-pending' : ''}${selected.includes(item.id) ? ' is-selected' : ''}`,
-                      draggable: true,
-                      onDragStart: (event) => {
-                        const ids = selected.includes(item.id) ? selected : [item.id]
-                        setDragIds(ids)
-                        if (event.dataTransfer) {
-                          event.dataTransfer.setData('text/plain', ids.join(','))
-                          event.dataTransfer.effectAllowed = 'move'
-                        }
-                      },
-                      onDragEnd: () => setDragIds([]),
-                      onContextMenu: (event) => openMenu(event, 'item', item.id),
-                    },
-                    h(
-                      'div',
-                      { className: 'dmc-item-head' },
-                      h('input', {
-                        type: 'checkbox',
-                        className: 'dmc-check',
-                        checked: selected.includes(item.id),
-                        onChange: () => toggleSelect(item.id),
-                      }),
-                      h('span', { className: 'dmc-item-title' }, `${item.pinned ? '📌 ' : ''}${item.title}`),
-                      h('span', { className: 'dmc-tag' }, groupName(data, item.groupId)),
-                      item.status === 'pending' ? h('span', { className: 'dmc-tag' }, '待确认') : null,
-                      item.anchorMode === 'full'
-                        ? h('span', { className: 'dmc-tag dmc-anchor-full' }, '完全锚点')
-                        : item.anchorMode === 'weight'
-                          ? h('span', { className: 'dmc-tag dmc-anchor-weight' }, '权重锚点')
-                          : null,
-                      h('span', { className: 'dmc-tag' }, item.source === 'auto' ? '模型写入' : item.source === 'import' ? '导入' : '手动'),
-                    ),
-                    item.tags.length ? h('div', { className: 'dmc-tags' }, item.tags.map((tag) => h('span', { key: tag, className: 'dmc-tag' }, tag))) : null,
-                    h('div', { className: 'dmc-item-body' }, item.body),
-                    h(
-                      'div',
-                      { className: 'dmc-actions' },
-                      item.status === 'pending'
-                        ? h('button', { className: 'dmc-btn primary', onClick: () => run('item.confirm', { ids: [item.id] }) }, '转正')
-                        : null,
-                      h('button', { className: 'dmc-btn', onClick: () => setEditing(item) }, '编辑'),
-                      h(
-                        'button',
-                        { className: 'dmc-btn', onClick: (event) => openMenuAtButton(event, 'item', item.id) },
-                        '更多…',
-                      ),
-                    ),
-                  ),
-                )
-              : h('div', { className: 'dmc-empty' }, query ? '没有匹配的记忆' : '这里还是空的，点「+ 新建记忆」或「导入」。'),
+            sorted.length ? sorted.map((item) => renderItem(item)) : emptyState(),
           ),
         ),
         menu ? menuNode() : null,
+        confirmAsk
+          ? h(ConfirmDialog, {
+              title: confirmAsk.title,
+              message: confirmAsk.message,
+              detail: confirmAsk.detail,
+              confirmLabel: confirmAsk.confirmLabel,
+              danger: confirmAsk.danger,
+              onConfirm: confirmAsk.onConfirm,
+              onClose: () => setConfirmAsk(null),
+            })
+          : null,
+        tagging
+          ? h(TagDialog, {
+              count: tagging.ids.length,
+              suggestions: data.tags,
+              onClose: () => setTagging(null),
+              onSubmit: async (tags) => {
+                await run('item.batch', { ids: tagging.ids, patch: { addTags: tags } })
+                clearSelect()
+                setTagging(null)
+              },
+            })
+          : null,
         storageOpen
           ? h(StorageDialog, {
               dataDir: data.dataDir,

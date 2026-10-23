@@ -169,7 +169,9 @@ let writeChain = Promise.resolve()
 const sessionTitles = new Map()
 
 function normalizeTags(value) {
-  if (!Array.isArray(value)) return []
+  // 面板传数组；命令行/工具/导入偶尔传「a, b」这样的字符串，这里一并接住。
+  const list = typeof value === 'string' ? value.split(/[,，、]/) : value
+  if (!Array.isArray(list)) return []
   const seen = new Set()
   const out = []
   for (const raw of value) {
@@ -499,7 +501,7 @@ function selectedItemIds(state, selection) {
   const itemIds = new Set(selection.itemIds ?? [])
   const chosen = []
   for (const item of state.items) {
-    if (item.status !== 'active' || !item.enabled) continue
+    if (item.deletedAt || item.status !== 'active' || !item.enabled) continue
     if (selection.mode === 'all') {
       chosen.push(item)
       continue
@@ -578,8 +580,33 @@ function sessionView(state, sessionId) {
   }
 }
 
+function visibleItems(state) {
+  return state.items.filter((item) => !item.deletedAt)
+}
+
+function recycledItems(state) {
+  return state.items
+    .filter((item) => item.deletedAt)
+    .sort((a, b) => String(b.deletedAt).localeCompare(String(a.deletedAt)))
+}
+
+/** 回收站里只回必要字段：面板要能显示标题/内容片段，但不需要全部状态。 */
+function recycleView(state) {
+  return recycledItems(state).map((item) => ({
+    id: item.id,
+    title: item.title,
+    body: item.body,
+    tags: item.tags,
+    groupId: item.groupId,
+    status: item.status,
+    anchorMode: item.anchorMode,
+    source: item.source,
+    deletedAt: item.deletedAt,
+  }))
+}
+
 function snapshot(state, sessionId, extra) {
-  const items = state.items
+  const items = visibleItems(state)
   const pending = items.filter((item) => item.status === 'pending')
   return {
     ok: true,
@@ -589,6 +616,7 @@ function snapshot(state, sessionId, extra) {
     ...extra,
     groups: sortGroups(state.groups),
     items: sortItems(items),
+    deleted: recycleView(state),
     tags: allTags(state),
     stats: {
       groups: state.groups.length,
@@ -596,6 +624,7 @@ function snapshot(state, sessionId, extra) {
       enabled: items.filter((item) => item.status === 'active' && item.enabled).length,
       pending: pending.length,
       pinned: items.filter((item) => item.pinned).length,
+      deleted: recycledItems(state).length,
     },
     session: sessionView(state, sessionId),
     preview: buildInjection(state, sessionId),
@@ -904,11 +933,13 @@ async function runOp(op, payload) {
       const group = requireGroup(state, payload.id)
       const mode = payload.mode === 'delete' ? 'delete' : 'keep'
       if (mode === 'delete') {
-        markDeleted(
-          state,
-          state.items.filter((item) => item.groupId === group.id).map((item) => item.id),
-        )
-        state.items = state.items.filter((item) => item.groupId !== group.id)
+        // 同样先送回收站，删文件夹不该等于永久丢数据。
+        const stamp = nowIso()
+        for (const item of state.items) {
+          if (item.groupId !== group.id || item.deletedAt) continue
+          item.deletedAt = stamp
+          item.updatedAt = stamp
+        }
       } else {
         for (const item of state.items) {
           if (item.groupId === group.id) {
@@ -1004,13 +1035,23 @@ async function runOp(op, payload) {
       const patch = payload.patch && typeof payload.patch === 'object' ? payload.patch : {}
       let changed = 0
       for (const id of ids) {
-        const item = state.items.find((entry) => entry.id === id)
+        const item = state.items.find((entry) => entry.id === id && !entry.deletedAt)
         if (!item) continue
         if ('enabled' in patch) item.enabled = patch.enabled !== false
         if ('pinned' in patch) item.pinned = patch.pinned === true
         if ('status' in patch) item.status = patch.status === 'pending' ? 'pending' : 'active'
         if ('groupId' in patch) item.groupId = resolveGroupId(state, patch.groupId)
         if ('anchorMode' in patch) item.anchorMode = ['full', 'weight'].includes(patch.anchorMode) ? patch.anchorMode : 'off'
+        // 批量打标：把标签并到每条已有标签上，不覆盖用户原来的分类。
+        if (Array.isArray(patch.addTags)) {
+          const merged = new Set(item.tags)
+          for (const tag of normalizeTags(patch.addTags)) merged.add(tag)
+          item.tags = [...merged]
+        }
+        if (Array.isArray(patch.removeTags)) {
+          const drop = new Set(normalizeTags(patch.removeTags))
+          item.tags = item.tags.filter((tag) => !drop.has(tag))
+        }
         item.updatedAt = nowIso()
         changed += 1
       }
@@ -1019,19 +1060,58 @@ async function runOp(op, payload) {
     }
 
     case 'item.delete': {
+      // 软删除：先移进回收站（保留全部字段），用户在回收站里还能捞回来。
+      // 只有 recycle.purge 才真正从库里删掉，并在那里写墓碑用于跨设备同步。
       const ids = Array.isArray(payload.ids) ? payload.ids.filter((id) => typeof id === 'string') : [payload.id]
-      const before = state.items.length
-      markDeleted(
-        state,
-        state.items.filter((item) => ids.includes(item.id)).map((item) => item.id),
-      )
-      state.items = state.items.filter((item) => !ids.includes(item.id))
+      const stamp = nowIso()
+      let moved = 0
+      for (const item of state.items) {
+        if (!ids.includes(item.id) || item.deletedAt) continue
+        item.deletedAt = stamp
+        item.updatedAt = stamp
+        moved += 1
+      }
       for (const selection of Object.values(sessions)) {
         selection.itemIds = selection.itemIds.filter((id) => !ids.includes(id))
       }
       await persist()
       await persistSessions()
-      return snapshot(state, sessionId, { message: `已删除 ${before - state.items.length} 条记忆` })
+      return snapshot(state, sessionId, {
+        message: moved ? `已移入回收站 ${moved} 条（在「回收站」里可以恢复）` : '这些记忆已经在回收站里了',
+      })
+    }
+
+    case 'item.restore': {
+      const ids = Array.isArray(payload.ids) ? payload.ids.filter((id) => typeof id === 'string') : [payload.id]
+      let restored = 0
+      for (const item of state.items) {
+        if (!ids.includes(item.id) || !item.deletedAt) continue
+        delete item.deletedAt
+        item.updatedAt = nowIso()
+        restored += 1
+      }
+      await persist()
+      return snapshot(state, sessionId, { message: restored ? `已恢复 ${restored} 条记忆` : '没有可恢复的记忆' })
+    }
+
+    case 'recycle.purge': {
+      // 真正删除：写墓碑，另一台设备同步后也会一起删掉。
+      const all = payload.all === true
+      const ids = Array.isArray(payload.ids) ? payload.ids.filter((id) => typeof id === 'string') : [payload.id]
+      const targets = state.items.filter((item) => item.deletedAt && (all || ids.includes(item.id)))
+      if (!targets.length) return snapshot(state, sessionId, { message: '回收站是空的' })
+      markDeleted(
+        state,
+        targets.map((item) => item.id),
+      )
+      const targetIds = new Set(targets.map((item) => item.id))
+      state.items = state.items.filter((item) => !targetIds.has(item.id))
+      for (const selection of Object.values(sessions)) {
+        selection.itemIds = selection.itemIds.filter((id) => !targetIds.has(id))
+      }
+      await persist()
+      await persistSessions()
+      return snapshot(state, sessionId, { message: `已彻底删除 ${targets.length} 条记忆（无法恢复）` })
     }
 
     case 'item.duplicate': {
@@ -1170,12 +1250,13 @@ async function runOp(op, payload) {
     }
 
     case 'export': {
+      const exportItems = visibleItems(state)
       const json = JSON.stringify(
         {
           version: 1,
           exportedAt: nowIso(),
           groups: sortGroups(state.groups).map((group) => ({ name: group.name, order: group.order })),
-          items: sortItems(state.items).map((item) => ({
+          items: sortItems(exportItems).map((item) => ({
             title: item.title,
             body: item.body,
             tags: item.tags,
@@ -1194,12 +1275,12 @@ async function runOp(op, payload) {
         '# 记忆库导出',
         '',
         `导出时间：${new Date().toLocaleString('zh-CN')}`,
-        `条目数：${state.items.length}`,
+        `条目数：${exportItems.length}`,
         '',
         ...sortGroups(state.groups).flatMap((group) => [
           `## ${group.name}`,
           '',
-          ...sortItems(state.items.filter((item) => item.groupId === group.id)).flatMap((item) => [
+          ...sortItems(exportItems.filter((item) => item.groupId === group.id)).flatMap((item) => [
             `### ${item.pinned ? '📌 ' : ''}${item.title}${item.enabled ? '' : '（已停用）'}`,
             '',
             item.body,
@@ -1224,7 +1305,7 @@ async function runOp(op, payload) {
       const query = String(payload.query ?? '').trim().toLowerCase()
       if (!query) throw fail('搜索词不能为空')
       const hits = state.items
-        .filter((item) => item.status === 'active' && item.enabled)
+        .filter((item) => !item.deletedAt && item.status === 'active' && item.enabled)
         .filter((item) =>
           `${item.title}\n${item.body}\n${item.tags.join(' ')}`.toLowerCase().includes(query),
         )
@@ -1353,7 +1434,7 @@ function registerTools(ctx) {
       const state = await ensureLoaded()
       const query = String(args?.query ?? '').trim().toLowerCase()
       const limit = Math.max(1, Math.min(50, Number(args?.limit) || 10))
-      const pool = state.items.filter((item) => item.status === 'active' && item.enabled)
+      const pool = state.items.filter((item) => !item.deletedAt && item.status === 'active' && item.enabled)
       const hits = (
         query
           ? pool.filter((item) =>
