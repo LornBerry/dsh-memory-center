@@ -124,6 +124,7 @@ window.__ModuleLoader__.load({
         .dmc-sync-option input { margin-top: 3px; }
         .dmc-sync-title { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
         .dmc-input, .dmc-textarea, .dmc-select { width: 100%; box-sizing: border-box; padding: 6px 9px; border-radius: 8px; border: 1px solid rgba(127,127,127,.3); background: rgba(127,127,127,.08); color: inherit; font-size: 13px; font-family: inherit; }
+  .dmc-select-mini { width: auto; padding: 3px 6px; font-size: 12px; }
         .dmc-textarea { min-height: 120px; resize: vertical; line-height: 1.6; }
         .dmc-textarea.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
         .dmc-preview { white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.6; max-height: 46vh; overflow: auto; padding: 8px; border-radius: 8px; background: rgba(127,127,127,.1); }
@@ -2322,10 +2323,34 @@ window.__ModuleLoader__.load({
                 h(
                   'span',
                   { className: 'dmc-card-hint' },
-                  data.recycle && data.recycle.autoPurge
-                    ? `保留 ${data.recycle.keepDays} 天，过期自动彻底删除`
-                    : '不会自动清理，需要手动清空',
+                  data.recycle && data.recycle.count
+                    ? `占用约 ${formatK(data.recycle.chars || 0)} 字符`
+                    : '空',
                 ),
+                (() => {
+                  const info = data.recycle || {}
+                  const current = Number(info.keepDays ?? 30)
+                  const options = [0, 7, 30, 90, 180]
+                  if (!options.includes(current)) options.push(current)
+                  options.sort((a, b) => a - b)
+                  return h(
+                    'label',
+                    { className: 'dmc-card-hint', title: info.locked ? '已被环境变量 DSH_MEMORY_RECYCLE_DAYS 固定' : '过期后自动彻底删除' },
+                    '自动清理：',
+                    h(
+                      'select',
+                      {
+                        className: 'dmc-select dmc-select-mini',
+                        value: String(current),
+                        disabled: Boolean(info.locked),
+                        onChange: (event) => run('recycle.set', { days: Number(event.target.value) }),
+                      },
+                      ...options.map((days) =>
+                        h('option', { key: String(days), value: String(days) }, days === 0 ? '不自动清理' : `${days} 天`),
+                      ),
+                    ),
+                  )
+                })(),
                 h(
                   'button',
                   {

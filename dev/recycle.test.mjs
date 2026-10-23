@@ -207,6 +207,19 @@ expect(
 )
 expect('没有把没过期的也清掉', resumed.deleted.length, (v) => v > 0 || v === 0, '本来就该剩 0 条')
 
+/* 保留天数可在面板里改（recycle.set）：写 config.json，并在快照里回传 */
+const set7 = await call({ op: 'recycle.set', days: 7 })
+expect('保留天数可改成 7 天', set7.body.recycle && set7.body.recycle.keepDays, (v) => v === 7, '应回写快照')
+expect('7 天 → 开启自动清理', set7.body.recycle && set7.body.recycle.autoPurge, (v) => v === true)
+expect('回收站占用字符数会上报', set7.body.recycle && typeof set7.body.recycle.chars, (v) => v === 'number')
+const savedCfg = JSON.parse(await fs.readFile(path.join(tmpRoot, 'config.json'), 'utf8'))
+expect('保留天数持久化到 config.json', savedCfg.recycleDays, (v) => v === 7, '刷新后应记住')
+const set0 = await call({ op: 'recycle.set', days: 0 })
+expect('0 天 = 不自动清理', set0.body.recycle && set0.body.recycle.autoPurge, (v) => v === false)
+const badDays = await call({ op: 'recycle.set', days: 99999 })
+expect('越界天数被拒', badDays.body.ok, (v) => v === false, '0–3650 之外应报错')
+await call({ op: 'recycle.set', days: 30 })
+
 await fs.rm(tmpRoot, { recursive: true, force: true })
 
 console.log(failures.length ? `\nRECYCLE FAILED: ${failures.join(', ')}\n` : '\nRECYCLE OK\n')

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 自检清单：一次把“插件到底装好没有”的各个环节都查一遍。
+ * 自检清单：一次把「插件到底装好没有」的各个环节都查一遍。
  * 只读，不改任何文件；任何一项 FAIL 都以退出码 1 结束。
  *
  * 用法：
@@ -19,6 +19,8 @@ import { createHash } from 'node:crypto'
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+
+import { pickDataDir } from '../lib/paths.js'
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)))
 const PROFILE = process.env.DSH_PROFILE_DIR || path.join(process.env.USERPROFILE || '', '.dsh', 'profiles', 'desktop')
@@ -175,7 +177,8 @@ if (!BASE) {
 /* ---------------------------------------------------------------- 5. 数据 */
 
 console.log('\n== 本地数据 ==')
-const dataDir = process.env.DSH_MEMORY_DIR || 'E:\\dsh-data\\memory'
+// 复用接口报回来的真实数据目录；接口不通时才退回本地探测（顺序见 lib/paths.js）
+const dataDir = (cfg && cfg.body && cfg.body.dataDir) || process.env.DSH_MEMORY_DIR || (await pickDataDir())
 const storeFile = path.join(dataDir, 'store.json')
 if (!existsSync(storeFile)) {
   warn('store.json 不存在', storeFile, '首次打开面板时会自动创建；路径不同就查 config.get 的 dataDir')

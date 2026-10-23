@@ -203,6 +203,14 @@ expect('旧条目的 full 锚点视为用户手设', live.anchorSource, 'user', 
 expect('旧条目的 weight 锚点视为用户手设', archItem.anchorSource, 'user', 'anchorMode=weight 且无 source 应记为 user')
 expect('旧条目的 off 锚点可被重判', delItem.anchorSource, 'inferred', 'anchorMode=off 且无 source 应可自动重判')
 
+/* 字符串形式的 tags 必须按分隔符切开，而不是按字拆开
+   （2026-10-23 评审：normalizeTags 里 for..of 遍历了原字符串，落库成了 ["约","束",",","流","程"]） */
+const strTags = await call({ op: 'item.create', title: '字符串标签', body: 'x', tags: '约束,流程、存储' })
+const strTagsItem = (strTags.items || []).find((entry) => entry.id === strTags.focusId) || {}
+expect('字符串 tags 按分隔符切分', strTagsItem.tags, (v) => Array.isArray(v) && v.join('|') === '约束|流程|存储', '不能按单字拆开')
+
+await call({ op: 'item.delete', ids: [strTags.focusId] })
+
 /* 显式指定锚点时 source 记为 user，并写进理由 */
 const created = await call({ op: 'item.create', title: '显式锚点', body: '随便写点', anchorMode: 'weight' })
 const createdId = created.focusId

@@ -61,7 +61,12 @@ function parseRecycleDays(raw) {
   return Math.min(3650, Math.max(0, Math.round(value)))
 }
 
-const RECYCLE_KEEP_DAYS = parseRecycleDays(process.env.DSH_MEMORY_RECYCLE_DAYS)
+const ENV_RECYCLE_DAYS = process.env.DSH_MEMORY_RECYCLE_DAYS
+  ? parseRecycleDays(process.env.DSH_MEMORY_RECYCLE_DAYS)
+  : null
+const DEFAULT_RECYCLE_DAYS = 30
+// 可在面板里改（写 config.json 的 recycleDays），设了环境变量时以环境变量为准
+let RECYCLE_KEEP_DAYS = ENV_RECYCLE_DAYS ?? DEFAULT_RECYCLE_DAYS
 
 /**
  * 检索用的同义组：内置一组中文常见说法，用户可在 config.json 的 synonyms 里追加自己的说法
@@ -141,6 +146,10 @@ async function loadConfig() {
   // 面板里拖过的压缩阈值；环境变量优先，设了环境变量就不读盘上的值。
   const savedRatio = parseRatio(config.injectRatio)
   if (ENV_COMPRESS_RATIO === null && savedRatio !== null) applyCompressRatio(savedRatio)
+  // 回收站保留天数：面板选过就用面板的，环境变量优先。
+  if (ENV_RECYCLE_DAYS === null && config.recycleDays !== undefined && config.recycleDays !== null) {
+    RECYCLE_KEEP_DAYS = parseRecycleDays(config.recycleDays)
+  }
   // 用户自建的同义词组（config.json 的 synonyms），追加在内置组之后。
   SYNONYMS = mergeSynonyms(config.synonyms)
   if (gitOk === null) gitOk = await hasGit()
@@ -252,7 +261,7 @@ function normalizeTags(value) {
   if (!Array.isArray(list)) return []
   const seen = new Set()
   const out = []
-  for (const raw of value) {
+  for (const raw of list) {
     const tag = String(raw ?? '').trim()
     if (!tag) continue
     const key = tag.toLowerCase()
@@ -915,7 +924,10 @@ function snapshot(state, sessionId, extra) {
     recycle: {
       keepDays: RECYCLE_KEEP_DAYS,
       autoPurge: RECYCLE_KEEP_DAYS > 0,
+      locked: ENV_RECYCLE_DAYS !== null,
+      defaultDays: DEFAULT_RECYCLE_DAYS,
       count: recycledItems(state).length,
+      chars: recycledItems(state).reduce((sum, item) => sum + costOf(item), 0),
     },
     archived: archiveView(state),
     capacity: capacityOf(state),
@@ -1577,6 +1589,26 @@ async function runOp(op, payload) {
       }
       await persist()
       return snapshot(state, sessionId, { message: restored ? `已恢复 ${restored} 条记忆` : '没有可恢复的记忆' })
+    }
+
+    case 'recycle.set': {
+      if (ENV_RECYCLE_DAYS !== null) throw fail('回收站保留天数已被环境变量 DSH_MEMORY_RECYCLE_DAYS 固定，请先去掉该变量')
+      const raw = Number(payload.days)
+      if (!Number.isFinite(raw) || raw < 0 || raw > 3650) throw fail('保留天数要在 0（不自动清理）到 3650 之间')
+      RECYCLE_KEEP_DAYS = Math.round(raw)
+      await saveConfig(DATA_DIR, { recycleDays: RECYCLE_KEEP_DAYS })
+      if (RECYCLE_KEEP_DAYS > 0) {
+        const removed = purgeExpiredDeleted(state)
+        if (removed.length) {
+          await persist()
+          return snapshot(state, sessionId, {
+            message: `回收站改为保留 ${RECYCLE_KEEP_DAYS} 天，已清掉 ${removed.length} 条过期记忆`,
+          })
+        }
+      }
+      return snapshot(state, sessionId, {
+        message: RECYCLE_KEEP_DAYS > 0 ? `回收站改为保留 ${RECYCLE_KEEP_DAYS} 天` : '回收站改为不自动清理',
+      })
     }
 
     case 'recycle.purge': {

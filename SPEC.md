@@ -125,7 +125,7 @@
 - **容量画像**：面板可查看当前总量、占压缩线的比例、各文件夹字符数、最长的 8 条（每行可「定位」到所在文件夹或直接「归档」），并在超过压缩线时提示。
 - **归档层**：`archivedAt` 标记的条目退出注入与常规列表，进入「归档」页；可批量还原。归档是压缩记忆量的主要手段，不删除数据。
 - **合并压缩**：可把多条旧记忆合并成一条精炼记忆，原条目全部转入归档并记录 `mergedInto`，不写墓碑。
-- **回收站保留期**：软删除条目默认保留 30 天（`DSH_MEMORY_RECYCLE_DAYS`，`0` = 不自动清理），到期在下次加载时彻底删除并写墓碑；面板回收站页显示保留策略。
+- **回收站保留期**：软删除条目默认保留 30 天，到期在下次加载时彻底删除并写墓碑。保留天数可在回收站底栏直接选（不自动清理 / 7 / 30 / 90 / 180 天），写入 `config.json` 的 `recycleDays` 并立即生效；优先级为 环境变量 `DSH_MEMORY_RECYCLE_DAYS` > 面板保存值 > 30 天，设了环境变量时下拉只读。回收站底栏同时显示占用字符数。
 - **批量改字段白名单**：`item.batch` 只接受 `enabled / pinned / status / groupId / anchorMode / tags / addTags / removeTags`；遇到其它字段（如 `title`）直接报错而不是静默忽略——批量改正文是事故入口。
 
 ### F15 检索（v1.8，用户追加需求：搜索要能用）
@@ -163,8 +163,9 @@
 | AC21 | 面板拖条改阈值后立即生效（无需重启）、写入 `config.json` 的 `injectRatio`、刷新页面后仍是新值；点「恢复 80%」回到默认；存在 `DSH_MEMORY_COMPRESS_RATIO` 时拖条只读并说明原因 | `node dev/host-smoke.mjs` + 手动 |
 | AC22 | 检索按相关度排序：查询「存哪」能找到正文写着「存储位置」的条目（同义词扩展），标题命中排在正文命中之前；完全无关的词返回空 | `node dev/search.test.mjs` |
 | AC23 | 面板搜索框、`memory_search`、写入前查重结果一致；`synonyms` 里追加 `["存哪","存储位置"]` 后，原来搜不到的说法也能命中 | `node dev/search.test.mjs` + 手动 |
-| AC21 | 压缩以整条为单位：进正文的条目正文必须完整出现，不允许出现半条；任何情况下注入文本不超过硬上限 | `node dev/budget.test.mjs` |
-| AC22 | 归档的条目不参与注入、搜索与计数，可在「归档」页批量还原；合并后原条目全部转入归档并记录 `mergedInto` | `node dev/governance.test.mjs`（如存在）+ 手动 |
+| AC24 | 压缩以整条为单位：进正文的条目正文必须完整出现，不允许出现半条；任何情况下注入文本不超过硬上限 | `node dev/budget.test.mjs` |
+| AC26 | 回收站保留天数可在面板底栏改动（写入 `config.json` 的 `recycleDays`、立即生效）、显示回收站占用字符数；越界值被拒；设了 `DSH_MEMORY_RECYCLE_DAYS` 时下拉只读 | `node dev/recycle.test.mjs` |
+| AC25 | 归档的条目不参与注入、搜索与计数，可在「归档」页批量还原；合并后原条目全部转入归档并记录 `mergedInto` | `node dev/governance.test.mjs`（如存在）+ 手动 |
 
 ## 5. 非目标（v1 不做）
 
