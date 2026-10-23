@@ -1,0 +1,29 @@
+name: 💡 提个想法
+description: 想要的功能、用着别扭的地方、交互改进
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 你想解决什么问题
+      description: 先说场景，别急着给方案——场景比方案更能说明该怎么做
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: 你设想的做法（可选）
+  - type: dropdown
+    id: area
+    attributes:
+      label: 大概属于哪块
+      options:
+        - 面板界面 / 交互
+        - 文件夹与整理
+        - 注入与压缩
+        - 检索
+        - 锚点
+        - 回收站 / 归档
+        - 同步
+        - 模型侧工具
+        - 其他

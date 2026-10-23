@@ -1,0 +1,48 @@
+name: 🐞 出问题了
+description: 装上后报错、面板空白、记忆没注入等
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        先跑一遍自检，能省掉一半来回：
+
+        ```bash
+        node dev/doctor.mjs --url http://127.0.0.1:<你的 DSH 端口>
+        ```
+
+        它会核对安装副本、版本、核心文件哈希、接口连通性与数据目录可写性。
+  - type: input
+    id: version
+    attributes:
+      label: 插件版本
+      description: 面板底栏或 `node dev/doctor.mjs` 输出里的版本号
+      placeholder: 0.7.4
+    validations:
+      required: true
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH 版本与系统
+      placeholder: DSH 0.2.x / Windows 11
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 发生了什么
+      description: 预期是什么、实际是什么；有截图直接拖进来
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: doctor 输出
+      description: 把 `node dev/doctor.mjs` 的完整输出贴上来（也可以只贴 FAIL 行）
+      render: text
+  - type: textarea
+    id: logs
+    attributes:
+      label: 报错原文
+      description: 浏览器控制台、DSH 终端里与 dsh-memory-center 相关的报错
+      render: text

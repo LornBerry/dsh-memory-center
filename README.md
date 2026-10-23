@@ -6,6 +6,8 @@ DSH 的「长期记忆」面板插件：**你自己看得见、改得动、决�
 - 代码位置：本目录（本地 bundle，通过 `plugin_manager install_bundle` 安装）。
 - 依赖：无。不联网、不调外部 API、不需要 token；只有一个本地 JSON 存储。
 
+> 装完用着不对、想要某个功能、或者只是想说说体验？开 [Issue](https://github.com/LornBerry/dsh-memory-center/issues) 或在 [Discussions](https://github.com/LornBerry/dsh-memory-center/discussions) 里聊。版本号、DSH 版本、报错原文贴上来最快。
+
 ## 安装
 
 1. 克隆到本机任意目录：
