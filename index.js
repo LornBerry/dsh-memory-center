@@ -1462,6 +1462,8 @@ function parseImportPayload(payload) {
 }
 
 function planImport(state, parsed) {
+  const ts = (value) =>
+    typeof value === 'string' && Number.isFinite(Date.parse(value)) ? value : nowIso()
   const existing = new Set(state.items.map(dedupeKey))
   const additions = []
   let skipped = 0
@@ -1473,19 +1475,28 @@ function planImport(state, parsed) {
       skipped += 1
       continue
     }
+    const tags = normalizeTags(candidate.tags)
+    // 锚点是这个插件的差异化语义，导入时必须跟着走；老导出文件没这三个字段则按内容重判。
+    const anchor = resolveAnchor({ anchorMode: candidate.anchorMode }, title, body, tags)
+    if (typeof candidate.anchorWhy === 'string' && candidate.anchorWhy.trim()) {
+      anchor.anchorWhy = candidate.anchorWhy
+    }
     const item = {
       id: `m-${randomUUID().slice(0, 8)}`,
       title: title || '未命名记忆',
       body,
-      tags: normalizeTags(candidate.tags),
+      tags,
       groupId: null,
       enabled: candidate.enabled !== false,
       pinned: candidate.pinned === true,
       status: 'active',
       source: 'import',
+      anchorMode: anchor.anchorMode,
+      anchorSource: anchor.anchorSource,
+      anchorWhy: anchor.anchorWhy,
       order: state.items.length + additions.length,
-      createdAt: nowIso(),
-      updatedAt: nowIso(),
+      createdAt: ts(candidate.createdAt),
+      updatedAt: ts(candidate.updatedAt),
     }
     if (existing.has(dedupeKey(item))) {
       skipped += 1
@@ -2345,6 +2356,9 @@ async function runOp(op, payload) {
             enabled: item.enabled,
             pinned: item.pinned,
             status: item.status,
+            anchorMode: item.anchorMode,
+            anchorSource: item.anchorSource,
+            anchorWhy: item.anchorWhy,
             createdAt: item.createdAt,
             updatedAt: item.updatedAt,
           })),
