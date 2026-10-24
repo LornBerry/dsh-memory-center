@@ -1295,7 +1295,7 @@ function snapshot(state, sessionId, extra) {
     gitAvailable: gitOk !== false,
     ...extra,
     groups: sortGroups(state.groups),
-    items: sortItems(items),
+    items: sortItems(items).map(slimItem),
     deleted: recycleView(state),
     recycle: {
       keepDays: RECYCLE_KEEP_DAYS,
