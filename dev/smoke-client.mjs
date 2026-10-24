@@ -268,6 +268,10 @@ globalThis.window = {
 globalThis.document = documentStub
 
 const source = readFileSync(CLIENT, 'utf8')
+// 契约：卡片必须由模块级 <MemoryRow>（React.memo）渲染。闭包版 renderItem 一旦回来，
+// 每次父组件渲染都会重建整列表、memo 直接失效，所以这里把口子焊死。
+if (source.includes('const renderItem')) fail.push('client.js 里又出现了 renderItem 闭包：卡片应走 <MemoryRow>')
+if (!source.includes('h(MemoryRow')) fail.push('client.js 里没有渲染 <MemoryRow>')
 new Function('window', 'document', 'fetch', source)(globalThis.window, documentStub, globalThis.fetch)
 
 if (!definition) {
@@ -410,6 +414,10 @@ for (const { options, component } of registrations) {
         // 独立面板（侧栏「记忆」）必须保留这两个入口；嵌进设置页时才隐藏
         if (!html.includes('存储位置')) fail.push('主面板工具栏缺少「存储位置」按钮')
         if (!html.includes('云端同步')) fail.push('主面板工具栏缺少「云端同步」按钮')
+        // 侧栏计数走一次遍历的 countsByGroup：分组计数必须与真实条数一致
+        if (!html.includes('项目约定2')) fail.push('侧栏「项目约定」计数应为 2（countsByGroup 未接线？）')
+        if (!html.includes('我的偏好0')) fail.push('侧栏「我的偏好」计数应为 0')
+        if (!html.includes('未归类0')) fail.push('侧栏「未归类」计数应为 0')
       }
       if (options.name === 'main' && tag === ' menu-item') {
         if (!html.includes('存放到文件夹')) fail.push('条目右键菜单缺少「存放到文件夹」分组')

@@ -14,6 +14,8 @@ window.__ModuleLoader__.load({
 
     const PANEL_ID = 'memory'
     const API = '/dsh-memory/api'
+    // 稳定引用的空数组：memo 依赖里如果每次新建 []，useMemo 会永远失效。
+    const EMPTY_ARRAY = []
 
     /* ---------------------------------------------------------------- css */
 
@@ -1744,6 +1746,112 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * 单条记忆卡片（独立组件 + React.memo）。
+     *
+     * 抽出来的原因：MemoryPanel 有两千行、几十个 state，任意一个变化（开关弹窗、拖动、
+     * 选中、hover）都会重跑整个 render。列表里每条卡片原来是闭包里的 renderItem 调用，
+     * 条目一多，每次按键都要重跑 N 次 renderMarkdown / highlightNodes 并重建整棵元素树。
+     * 现在卡片只在「自己的 props 变了」时重渲染。
+     *
+     * 保持 memo 生效的两个前提：
+     * 1) 父组件传进来的是稳定引用：item 来自 data.items，topic 来自 data.topics，
+     *    groupLabel 是字符串，isSelected 是布尔；actions 用 ref 转发保持同一个对象。
+     * 2) 本组件不直接读父组件的 state —— 一切都通过 props 传。
+     */
+    const MemoryRow = React.memo(function MemoryRow(props) {
+      const { item, view, query, isSelected, snippet, groupLabel, topic, recycleMode, actions } = props
+      const listMode = view === 'list'
+      const isDeleted = Boolean(item.deletedAt) || recycleMode
+      const stamp = String(item.updatedAt || item.createdAt || '').replace('T', ' ').slice(0, 16)
+      const titleNodes = useMemo(() => highlightNodes(item.title, query), [item.title, query])
+      const bodyNodes = useMemo(() => {
+        if (view === 'list') return null
+        if (query.trim()) return highlightNodes(snippet || item.excerpt || '', query)
+        return renderMarkdown(item.excerpt || item.body || '')
+      }, [view, query, snippet, item.excerpt, item.body])
+      const anchorHintText = `${item.anchorSource === 'inferred' ? '插件按内容初判' : '你手动设置'}${
+        item.anchorWhy ? `：${item.anchorWhy}` : ''
+      }。可在「更多… → 锚点」里改`
+      const anchorTag =
+        item.anchorMode === 'full'
+          ? h('span', { className: 'dmc-tag dmc-anchor-full', title: anchorHintText }, '完全锚点')
+          : item.anchorMode === 'weight'
+            ? h('span', { className: 'dmc-tag dmc-anchor-weight', title: anchorHintText }, '权重锚点')
+            : null
+      const staleTag =
+        topic && !topic.isLatest
+          ? h(
+              'span',
+              {
+                className: 'dmc-tag dmc-stale',
+                title: `同主题共 ${topic.total} 条，最新是「${topic.latestTitle}」${
+                  topic.latestAt ? `（${String(topic.latestAt).slice(0, 10)} 更新）` : ''
+                }。改这条会让它变回最新；确认旧版没用了就归档它。`,
+                onClick: (event) => event.stopPropagation(),
+              },
+              '旧版',
+            )
+          : null
+      return h(
+        'div',
+        {
+          key: item.id,
+          className: `dmc-item${item.enabled ? '' : ' is-off'}${item.status === 'pending' ? ' is-pending' : ''}${
+            isSelected ? ' is-selected' : ''
+          }${isDeleted ? ' is-deleted' : ''}`,
+          draggable: !isDeleted,
+          onDragStart: (event) => {
+            if (isDeleted) return
+            actions.dragStart(event, item.id, isSelected)
+          },
+          onDragEnd: () => actions.dragEnd(),
+          onContextMenu: isDeleted ? undefined : (event) => actions.contextMenu(event, item.id),
+        },
+        h(
+          'div',
+          { className: 'dmc-item-head' },
+          h('input', {
+            type: 'checkbox',
+            className: 'dmc-check',
+            checked: isSelected,
+            onChange: () => actions.toggle(item.id),
+          }),
+          item.anchorMode === 'full' ? h('span', { className: 'dmc-anchor-dot full', title: '完全锚点（硬性）' }) : null,
+          item.anchorMode === 'weight' ? h('span', { className: 'dmc-anchor-dot weight', title: '权重锚点（软性）' }) : null,
+          h('span', { className: 'dmc-item-title' }, `${item.pinned ? '📌 ' : ''}`, ...titleNodes),
+          !listMode ? h('span', { className: 'dmc-tag' }, groupLabel) : null,
+          item.status === 'pending' ? h('span', { className: 'dmc-tag' }, '待确认') : null,
+          listMode ? h('span', { className: 'dmc-tag' }, groupLabel) : null,
+          listMode ? null : anchorTag,
+          staleTag,
+          listMode
+            ? h('span', { className: 'dmc-list-meta' }, `${item.enabled ? '' : '已停用 · '}${stamp}`)
+            : h('span', { className: 'dmc-tag' }, item.source === 'auto' ? '模型写入' : item.source === 'import' ? '导入' : '手动'),
+        ),
+        !listMode && item.tags.length
+          ? h('div', { className: 'dmc-tags' }, item.tags.map((tag) => h('span', { key: tag, className: 'dmc-tag' }, tag)))
+          : null,
+        bodyNodes ? h('div', { className: `dmc-item-body${query.trim() ? '' : ' dmc-md'}` }, ...bodyNodes) : null,
+        h(
+          'div',
+          { className: 'dmc-actions' },
+          isDeleted
+            ? h('button', { className: 'dmc-btn primary', onClick: () => actions.restore(item.id) }, '恢复')
+            : [
+                item.status === 'pending'
+                  ? h('button', { key: 'confirm', className: 'dmc-btn primary', onClick: () => actions.confirm(item.id) }, '转正')
+                  : null,
+                h('button', { key: 'edit', className: 'dmc-btn', onClick: () => actions.edit(item) }, '编辑'),
+                h('button', { key: 'more', className: 'dmc-btn', onClick: (event) => actions.more(event, item.id) }, '更多…'),
+              ],
+          isDeleted
+            ? h('button', { className: 'dmc-btn danger', onClick: () => actions.purge(item.id) }, '彻底删除')
+            : null,
+        ),
+      )
+    })
+
     function MemoryPanel(props) {
       const state = useStore()
       const data = state.data
@@ -1785,6 +1893,134 @@ window.__ModuleLoader__.load({
         refresh(activeSessionId)
       }, [])
 
+      // ---- 派生数据：集中 memo 化 ----
+      // 之前每个文件夹都要对整个 items 扫一遍数数，filtered/sorted 也是每次渲染重算，
+      // 结果是任意一个 state（打开弹窗、选中、hover…）变化都把整表重算一遍。
+      // 这些 hook 必须放在 early return 之前：hook 数量若随 data 是否就绪变化，
+      // React 会抛 "Rendered more hooks than during the previous render"。
+      const itemsList = (data && data.items) || EMPTY_ARRAY
+      const recycleMode = filter === '__deleted'
+      const archiveMode = filter === '__archived'
+      const deletedItems = (data && data.deleted) || EMPTY_ARRAY
+      const archivedItems = (data && data.archived) || EMPTY_ARRAY
+      const pool = recycleMode ? deletedItems : archiveMode ? archivedItems : itemsList
+      const activeHits = hits && hits.query === query.trim() ? hits : null
+
+      // 侧栏计数：一次遍历建 Map（O(条目数)），替掉每个文件夹各扫一遍整表（O(文件夹数 × 条目数)）。
+      const countsByGroup = useMemo(() => {
+        const map = new Map()
+        for (const item of itemsList) {
+          if (item.status !== 'active') continue
+          const key = item.groupId || '__ungrouped'
+          map.set(key, (map.get(key) || 0) + 1)
+        }
+        return map
+      }, [itemsList])
+
+      const pendingItems = useMemo(() => itemsList.filter((item) => item.status === 'pending'), [itemsList])
+
+      const filtered = useMemo(() => {
+        return pool.filter((item) => {
+          if (recycleMode || archiveMode) {
+            // 回收站 / 归档只按关键词过滤，不再套文件夹/待确认条件。
+          } else {
+            if (filter === '__pending' && item.status !== 'pending') return false
+            if (filter === '__ungrouped' && item.groupId) return false
+            if (filter !== '__all' && filter !== '__pending' && filter !== '__ungrouped' && item.groupId !== filter) return false
+          }
+          if (query.trim()) {
+            const raw = query.trim()
+            if (activeHits) {
+              if (!activeHits.ids.includes(item.id)) return false
+            } else {
+              const haystack = `${item.title}\n${item.excerpt || item.body || ''}\n${item.tags.join(' ')}`.toLowerCase()
+              if (!haystack.includes(raw.toLowerCase())) return false
+            }
+          }
+          return true
+        })
+      }, [pool, filter, query, activeHits, recycleMode, archiveMode])
+
+      // 排序：默认按手动顺序（拖拽/顺序字段），也可以按时间找「刚加的那条」。
+      // 置顶条目无论正序倒序都排在最前，所以方向只作用在同一置顶分组内部。
+      const sorted = useMemo(() => {
+        const list = [...filtered]
+        // 搜索时按相关度排（宿主已经算好顺序），不再套文件夹/时间排序。
+        if (activeHits) {
+          const rank = new Map(activeHits.ids.map((id, index) => [id, index]))
+          list.sort((a, b) => (rank.get(a.id) ?? 1e9) - (rank.get(b.id) ?? 1e9))
+          return list
+        }
+        const factor = sortDir === 'desc' ? -1 : 1
+        const byPinned = (a, b) => (a.pinned ? 0 : 1) - (b.pinned ? 0 : 1)
+        if (sortKey === 'updated' || sortKey === 'created') {
+          const field = sortKey === 'updated' ? 'updatedAt' : 'createdAt'
+          list.sort((a, b) => byPinned(a, b) || factor * String(a[field] || '').localeCompare(String(b[field] || '')))
+          return list
+        }
+        if (sortKey === 'title') {
+          list.sort((a, b) => byPinned(a, b) || factor * String(a.title).localeCompare(String(b.title), 'zh-CN'))
+          return list
+        }
+        return list
+      }, [filtered, sortKey, sortDir, activeHits])
+
+      // 选中集合与文件夹名 Map：避免每行都做 selected.includes（O(条目数²)）和 groups.find。
+      const selectedSet = useMemo(() => new Set(selected), [selected])
+      const groupNameMap = useMemo(() => {
+        const map = new Map()
+        for (const group of (data && data.groups) || EMPTY_ARRAY) map.set(group.id, group.name)
+        return map
+      }, [data && data.groups])
+
+      // 行卡片的回调：用 ref 转发，保证 actions 对象的引用永久稳定。
+      // 否则每次渲染新建的箭头函数会让 React.memo 的浅比较全部失效，拆了等于没拆。
+      const actionsRef = useRef(null)
+      const actions = useMemo(
+        () => ({
+          toggle: (id) => actionsRef.current.toggle(id),
+          dragStart: (event, id, isSelected) => actionsRef.current.dragStart(event, id, isSelected),
+          dragEnd: () => actionsRef.current.dragEnd(),
+          contextMenu: (event, id) => actionsRef.current.contextMenu(event, id),
+          restore: (id) => actionsRef.current.restore(id),
+          confirm: (id) => actionsRef.current.confirm(id),
+          edit: (item) => actionsRef.current.edit(item),
+          more: (event, id) => actionsRef.current.more(event, id),
+          purge: (item) => actionsRef.current.purge(item),
+        }),
+        [],
+      )
+      useLayoutEffect(() => {
+        // data 还没到的那次渲染会在下面的 `if (!data) return` 处提前结束，
+        // 后面的 toggleSelect / openMenu 都还没初始化（TDZ），所以这里先判空。
+        if (!data) return
+        actionsRef.current = {
+          toggle: toggleSelect,
+          dragStart: (event, id, isSelected) => {
+            const ids = isSelected ? selected : [id]
+            setDragIds(ids)
+            if (event && event.dataTransfer) {
+              event.dataTransfer.setData('text/plain', ids.join(','))
+              event.dataTransfer.effectAllowed = 'move'
+            }
+          },
+          dragEnd: () => setDragIds([]),
+          contextMenu: (event, id) => openMenu(event, 'item', id),
+          restore: (id) => run('item.restore', { ids: [id] }),
+          confirm: (id) => run('item.confirm', { ids: [id] }),
+          edit: (item) => setEditing(item),
+          more: (event, id) => openMenuAtButton(event, 'item', id),
+          purge: (item) =>
+            setConfirmAsk({
+              title: '彻底删除这条记忆？',
+              message: `「${item.title}」将被永久删除，回收站里也无法恢复。`,
+              confirmLabel: '彻底删除',
+              danger: true,
+              onConfirm: () => run('recycle.purge', { ids: [item.id] }),
+            }),
+        }
+      })
+
       if (!data) {
         return h(
           'div',
@@ -1794,11 +2030,6 @@ window.__ModuleLoader__.load({
       }
 
       const pendingCount = data.stats.pending
-      const deletedItems = data.deleted || []
-      const archivedItems = data.archived || []
-      const recycleMode = filter === '__deleted'
-      const archiveMode = filter === '__archived'
-      const pool = recycleMode ? deletedItems : archiveMode ? archivedItems : data.items
 
       // 搜索走宿主检索（同义词扩展 + 相关度排序），输入停顿 180ms 再请求；
       // 请求回来之前先用本地子串兜底，避免输入时的空窗。
@@ -1829,57 +2060,7 @@ window.__ModuleLoader__.load({
         }
       }, [query, archiveMode])
 
-      const activeHits = hits && hits.query === query.trim() ? hits : null
-
-      const filtered = pool.filter((item) => {
-        if (recycleMode || archiveMode) {
-          // 回收站 / 归档只按关键词过滤，不再套文件夹/待确认条件。
-        } else {
-          if (filter === '__pending' && item.status !== 'pending') return false
-          if (filter === '__ungrouped' && item.groupId) return false
-          if (filter !== '__all' && filter !== '__pending' && filter !== '__ungrouped' && item.groupId !== filter) return false
-        }
-        if (query.trim()) {
-          const raw = query.trim()
-          if (activeHits) {
-            if (!activeHits.ids.includes(item.id)) return false
-          } else {
-            const haystack = `${item.title}\n${item.excerpt || item.body || ''}\n${item.tags.join(' ')}`.toLowerCase()
-            if (!haystack.includes(raw.toLowerCase())) return false
-          }
-        }
-        return true
-      })
-
-      // 排序：默认按手动顺序（拖拽/顺序字段），也可以按时间找“刚加的那条”。
-      // 置顶条目无论正序倒序都排在最前，所以方向只作用在同一置顶分组内部。
-      const sorted = (() => {
-        const list = [...filtered]
-        // 搜索时按相关度排（宿主已经算好顺序），不再套文件夹/时间排序。
-        if (activeHits) {
-          const rank = new Map(activeHits.ids.map((id, index) => [id, index]))
-          list.sort((a, b) => (rank.get(a.id) ?? 1e9) - (rank.get(b.id) ?? 1e9))
-          return list
-        }
-        const factor = sortDir === 'desc' ? -1 : 1
-        const byPinned = (a, b) => (a.pinned ? 0 : 1) - (b.pinned ? 0 : 1)
-        if (sortKey === 'updated' || sortKey === 'created') {
-          const field = sortKey === 'updated' ? 'updatedAt' : 'createdAt'
-          list.sort(
-            (a, b) => byPinned(a, b) || factor * String(a[field] || '').localeCompare(String(b[field] || '')),
-          )
-          return list
-        }
-        if (sortKey === 'title') {
-          list.sort(
-            (a, b) => byPinned(a, b) || factor * String(a.title).localeCompare(String(b.title), 'zh-CN'),
-          )
-          return list
-        }
-        return list
-      })()
-
-      const pendingItems = data.items.filter((item) => item.status === 'pending')
+      // filtered / sorted / activeHits 已上移到 early return 之前做 memo（见上方「派生数据」块）。
 
       const currentName =
         filter === '__all'
@@ -2138,132 +2319,9 @@ window.__ModuleLoader__.load({
         )
       }
 
-      const anchorHint = (item) => {
-        const source = item.anchorSource === 'inferred' ? '插件按内容初判' : '你手动设置'
-        const why = item.anchorWhy ? `：${item.anchorWhy}` : ''
-        return `${source}${why}。可在「更多… → 锚点」里改`
-      }
-
-      const anchorTag = (item) =>
-        item.anchorMode === 'full'
-          ? h('span', { className: 'dmc-tag dmc-anchor-full', title: anchorHint(item) }, '完全锚点')
-          : item.anchorMode === 'weight'
-            ? h('span', { className: 'dmc-tag dmc-anchor-weight', title: anchorHint(item) }, '权重锚点')
-            : null
-
       const topicIndex = (data && data.topics && data.topics.byId) || {}
 
-      const staleTag = (item) => {
-        const topic = topicIndex[item.id]
-        if (!topic || topic.isLatest) return null
-        const at = String(topic.latestAt || '').slice(0, 10)
-        return h(
-          'span',
-          {
-            className: 'dmc-tag dmc-stale',
-            title: `同主题共 ${topic.total} 条，最新是「${topic.latestTitle}」${at ? `（${at} 更新）` : ''}。改这条会让它变回最新；确认旧版没用了就归档它。`,
-            onClick: (event) => event.stopPropagation(),
-          },
-          '旧版',
-        )
-      }
-
-      const renderItem = (item) => {
-        const listMode = view === 'list'
-        const stamp = String(item.updatedAt || item.createdAt || '').replace('T', ' ').slice(0, 16)
-        const isDeleted = Boolean(item.deletedAt) || recycleMode
-        return h(
-          'div',
-          {
-            key: item.id,
-            className: `dmc-item${item.enabled ? '' : ' is-off'}${item.status === 'pending' ? ' is-pending' : ''}${
-              selected.includes(item.id) ? ' is-selected' : ''
-            }${isDeleted ? ' is-deleted' : ''}`,
-            draggable: !isDeleted,
-            onDragStart: (event) => {
-              if (isDeleted) return
-              const ids = selected.includes(item.id) ? selected : [item.id]
-              setDragIds(ids)
-              if (event.dataTransfer) {
-                event.dataTransfer.setData('text/plain', ids.join(','))
-                event.dataTransfer.effectAllowed = 'move'
-              }
-            },
-            onDragEnd: () => setDragIds([]),
-            onContextMenu: isDeleted ? undefined : (event) => openMenu(event, 'item', item.id),
-          },
-          h(
-            'div',
-            { className: 'dmc-item-head' },
-            h('input', {
-              type: 'checkbox',
-              className: 'dmc-check',
-              checked: selected.includes(item.id),
-              onChange: () => toggleSelect(item.id),
-            }),
-            item.anchorMode === 'full' ? h('span', { className: 'dmc-anchor-dot full', title: '完全锚点（硬性）' }) : null,
-            item.anchorMode === 'weight' ? h('span', { className: 'dmc-anchor-dot weight', title: '权重锚点（软性）' }) : null,
-            h('span', { className: 'dmc-item-title' }, `${item.pinned ? '📌 ' : ''}`, ...highlightNodes(item.title, query)),
-            !listMode ? h('span', { className: 'dmc-tag' }, groupName(data, item.groupId)) : null,
-            item.status === 'pending' ? h('span', { className: 'dmc-tag' }, '待确认') : null,
-            listMode ? h('span', { className: 'dmc-tag' }, groupName(data, item.groupId)) : null,
-            listMode ? null : anchorTag(item),
-            staleTag(item),
-            listMode
-              ? h('span', { className: 'dmc-list-meta' }, `${item.enabled ? '' : '已停用 · '}${stamp}`)
-              : h('span', { className: 'dmc-tag' }, item.source === 'auto' ? '模型写入' : item.source === 'import' ? '导入' : '手动'),
-          ),
-          !listMode && item.tags.length
-            ? h('div', { className: 'dmc-tags' }, item.tags.map((tag) => h('span', { key: tag, className: 'dmc-tag' }, tag)))
-            : null,
-          listMode
-            ? null
-            : query.trim()
-              ? h(
-                  'div',
-                  { className: 'dmc-item-body' },
-                  ...highlightNodes(
-                    ((activeHits && activeHits.snippets[item.id]) || item.excerpt || ''),
-                    query,
-                  ),
-                )
-              : h('div', { className: 'dmc-item-body dmc-md' }, ...renderMarkdown(item.excerpt || item.body || '')),
-          h(
-            'div',
-            { className: 'dmc-actions' },
-            isDeleted
-              ? h('button', { className: 'dmc-btn primary', onClick: () => run('item.restore', { ids: [item.id] }) }, '恢复')
-              : [
-                  item.status === 'pending'
-                    ? h('button', { key: 'confirm', className: 'dmc-btn primary', onClick: () => run('item.confirm', { ids: [item.id] }) }, '转正')
-                    : null,
-                  h('button', { key: 'edit', className: 'dmc-btn', onClick: () => setEditing(item) }, '编辑'),
-                  h(
-                    'button',
-                    { key: 'more', className: 'dmc-btn', onClick: (event) => openMenuAtButton(event, 'item', item.id) },
-                    '更多…',
-                  ),
-                ],
-            isDeleted
-              ? h(
-                  'button',
-                  {
-                    className: 'dmc-btn danger',
-                    onClick: () =>
-                      setConfirmAsk({
-                        title: '彻底删除这条记忆？',
-                        message: `「${item.title}」将被永久删除，回收站里也无法恢复。`,
-                        confirmLabel: '彻底删除',
-                        danger: true,
-                        onConfirm: () => run('recycle.purge', { ids: [item.id] }),
-                      }),
-                  },
-                  '彻底删除',
-                )
-              : null,
-          ),
-        )
-      }
+      // 单条卡片已拆成模块级 <MemoryRow>（见文件上方定义），列表处直接 h(MemoryRow, ...)。
 
       const emptyState = () => {
         if (query.trim()) {
@@ -2386,7 +2444,7 @@ window.__ModuleLoader__.load({
               : null,
             navRow('__all', '全部记忆', data.stats.items),
             navRow('__pending', '待确认', pendingCount),
-            navRow('__ungrouped', '未归类', data.items.filter((item) => !item.groupId && item.status === 'active').length, null),
+            navRow('__ungrouped', '未归类', countsByGroup.get('__ungrouped') || 0, null),
             navRow('__deleted', '回收站', data.stats.deleted || 0, undefined),
             navRow('__archived', '归档', data.stats.archived || 0, undefined),
             h('div', { className: 'dmc-nav-head' }, h('span', { className: 'dmc-card-hint' }, '文件夹')),
@@ -2417,7 +2475,7 @@ window.__ModuleLoader__.load({
                 h(
                   'span',
                   { className: 'dmc-count' },
-                  String(data.items.filter((item) => item.groupId === group.id && item.status === 'active').length),
+                  String(countsByGroup.get(group.id) || 0),
                 ),
                 h(
                   'button',
@@ -3024,7 +3082,22 @@ window.__ModuleLoader__.load({
                   h('span', { className: 'dmc-card-hint' }, '（勾选后底部会出现批量操作条；也可以直接把卡片拖到左侧文件夹）'),
                 )
               : null,
-            sorted.length ? sorted.map((item) => renderItem(item)) : emptyState(),
+            sorted.length
+              ? sorted.map((item) =>
+                  h(MemoryRow, {
+                    key: item.id,
+                    item,
+                    view,
+                    query,
+                    isSelected: selectedSet.has(item.id),
+                    snippet: activeHits ? ((activeHits.snippets && activeHits.snippets[item.id]) || null) : null,
+                    groupLabel: groupNameMap.get(item.groupId) || '未归类',
+                    topic: topicIndex[item.id],
+                    recycleMode,
+                    actions,
+                  }),
+                )
+              : emptyState(),
           ),
         ),
         menu ? menuNode() : null,

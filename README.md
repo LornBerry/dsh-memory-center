@@ -249,6 +249,7 @@ node dev/release.mjs            # 自测 + 升版本 + 打包，打印 install_b
   node dev/resilience.test.mjs
   node dev/synonyms.test.mjs   # 同义词面板：保存即生效、非法输入被拒、重载后仍在
   node dev/search-regression.test.mjs # 检索效果回归集：22 条真实记忆 + 26 个查询，改了分词/权重/同义词必须跑
+  node dev/render-bench.mjs 2000      # 渲染基准（只报数字，不断言）：2000 条时面板单次渲染耗时
   ```
 - 接口自测（端口换成你当前 DSH Web GUI 的端口）：
 
