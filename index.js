@@ -855,6 +855,10 @@ async function mergeRemote(remoteStore) {
 
 let syncing = null
 
+/** 上一次「安静拉取」的时间：面板打开、定时器都会走它，节流避免频繁打远端。 */
+let quietPullAt = 0
+const QUIET_PULL_GAP = 2 * 60 * 1000
+
 async function runSyncNow({ quiet = false } = {}) {
   if (!syncEnabled()) {
     return { status: 'skipped', message: '同步未启用' }
@@ -1266,6 +1270,18 @@ function recycleView(state) {
     source: item.source,
     deletedAt: item.deletedAt,
   }))
+}
+
+/**
+ * 列表用的精简条目：不带正文，只给截断摘要与字数。
+ *
+ * 面板一打开就要列出全部记忆，把每条几百字的正文一起塞过去，几百条就是几十 KB，
+ * 这些字节只为了渲染卡片上那两行。正文改成点开编辑 / 看详情时用 item.get 单独取。
+ */
+function slimItem(item) {
+  const body = String(item.body ?? '')
+  const { body: _omitted, ...rest } = item
+  return { ...rest, excerpt: body.slice(0, 120), bodyChars: body.length }
 }
 
 function snapshot(state, sessionId, extra) {
@@ -1833,6 +1849,23 @@ async function runOp(op, payload) {
       return snapshot(state, sessionId, { message: result.message || '已同步' })
     }
 
+    case 'sync.pull': {
+      // 安静拉取：面板打开、定时器都会走它。不做提示，失败也不打扰，
+      // 但两分钟内不重复打远端（同一台机器上多个标签页会同时挂载面板）。
+      if (!syncEnabled() || !sync.autoPull) return { ok: true, skipped: true, reason: '未开启自动拉取' }
+      if (payload.force !== true && Date.now() - quietPullAt < QUIET_PULL_GAP) {
+        return { ok: true, skipped: true, reason: '刚刚拉过' }
+      }
+      quietPullAt = Date.now()
+      try {
+        const result = await runSyncNow({ quiet: true })
+        return { ok: true, pulled: result.status === 'ok', changed: Boolean(result.changed), message: result.message || '' }
+      } catch (error) {
+        quietPullAt = 0
+        return { ok: true, pulled: false, message: String(error?.message || error) }
+      }
+    }
+
     case 'group.create': {
       const groupName = uniqueGroupName(state, payload.name)
       state.groups.push({
@@ -1933,6 +1966,12 @@ async function runOp(op, payload) {
       state.items.push(item)
       await persist()
       return snapshot(state, sessionId, { message: `已新增记忆「${item.title}」`, focusId: item.id })
+    }
+
+    case 'item.get': {
+      // 列表只给正文摘要，点开编辑/详情时才来这里取全文。
+      const item = requireItem(state, payload.id)
+      return { ok: true, item }
     }
 
     case 'item.update': {
@@ -2572,21 +2611,43 @@ function registerTools(ctx) {
       const lines = [
         `匹配 ${hits.length} 条（记忆库共 ${pool.length} 条启用记忆，按相关度排序）${archivedNote}：`,
         '',
-        ...hits.flatMap(({ item }) => {
-          const topic = topicsOf(state).byId.get(item.id)
-          const stale =
-            topic && !topic.isLatest ? ` 〔旧版，同主题以「${topic.latestTitle}」为准〕` : ''
-          return [
-            `- ${item.pinned ? '📌 ' : ''}${item.title}  〔${groupNameOf(state, item.groupId)}${item.tags.length ? ' / ' + item.tags.join(' / ') : ''}〕${item.archivedAt ? ' 〔已归档〕' : ''}${stale}`,
-            ...item.body
-              .trim()
-              .split('\n')
-              .filter(Boolean)
-              .slice(0, 8)
-              .map((line) => `  ${line}`),
-            '',
-          ]
-        }),
+        ...(() => {
+          // 搜索出口也要有预算：注入侧早就有 12000 字符上限，这边原本是敞开的，
+          // limit=50 加几条长正文就能把上下文打爆。单条正文先截到 600 字，
+          // 总量到 8000 字符就停止展开，只告诉模型还有多少条没放出来。
+          const PER_ITEM_BODY = 600
+          const TOTAL_BUDGET = 8000
+          const blocks = []
+          let used = 0
+          for (const { item } of hits) {
+            const topic = topicsOf(state).byId.get(item.id)
+            const stale =
+              topic && !topic.isLatest ? ` 〔旧版，同主题以「${topic.latestTitle}」为准〕` : ''
+            const raw = item.body.trim()
+            const clipped =
+              raw.length > PER_ITEM_BODY
+                ? `${raw.slice(0, PER_ITEM_BODY)}…（正文共 ${raw.length} 字，已截断）`
+                : raw
+            const block = [
+              `- ${item.pinned ? '📌 ' : ''}${item.title}  〔${groupNameOf(state, item.groupId)}${item.tags.length ? ' / ' + item.tags.join(' / ') : ''}〕${item.archivedAt ? ' 〔已归档〕' : ''}${stale}`,
+              ...clipped
+                .split('\n')
+                .filter(Boolean)
+                .slice(0, 8)
+                .map((line) => `  ${line}`),
+              '',
+            ].join('\n')
+            if (blocks.length && used + block.length > TOTAL_BUDGET) {
+              blocks.push(
+                `…（还有 ${hits.length - blocks.length} 条未展开：结果总量已到 ${TOTAL_BUDGET} 字符上限，缩小关键词或调小 limit 再看）`,
+              )
+              break
+            }
+            used += block.length
+            blocks.push(block)
+          }
+          return blocks
+        })(),
       ]
       return lines.join('\n').trimEnd()
     },
@@ -2620,6 +2681,16 @@ function registerTools(ctx) {
       const title = String(args?.title ?? '').trim()
       const body = String(args?.body ?? '')
       if (!title && !body.trim()) return '写入失败：标题与正文不能同时为空。'
+      // 一条几万字的记忆会把全库检索拖慢（每条都要分词、算摘要、算成本），
+      // 也让「一条只讲一件事」的约定失效。写入端直接挡掉，比事后让用户去删更省事。
+      const MAX_WRITE_BODY = 8000
+      const MAX_WRITE_TITLE = 200
+      if (body.length > MAX_WRITE_BODY) {
+        return `写入失败：正文 ${body.length} 字，超过单条上限 ${MAX_WRITE_BODY} 字。请拆成几条更聚焦的记忆（一条只讲一件事），细节多的话可以分条写。`
+      }
+      if (title.length > MAX_WRITE_TITLE) {
+        return `写入失败：标题 ${title.length} 字，超过 ${MAX_WRITE_TITLE} 字上限。标题写成一句话结论就够，具体内容放正文。`
+      }
       const tags = normalizeTags(String(args?.tags ?? '').split(','))
       const { id: sessionId, headerTitle } = sessionOf(exec)
       // 系统提示里写的「一次对话最多 3 条」只是建议，模型可以不听；这里用代码兜住，
@@ -2759,6 +2830,17 @@ export function apply(ctx) {
       lastInjected.delete(sessionId)
       sessionTitles.delete(sessionId)
     }
+  })
+
+  // 定时拉取：DSH 长期开着不重启时，另一台设备推上来的改动也能自动下来。
+  // 只在启用同步、且开了自动拉取时工作；10 分钟一次，失败静默（面板打开时另有一次 sync.pull）。
+  ctx.effect(() => {
+    const timer = setInterval(() => {
+      if (!syncEnabled() || !sync.autoPull) return
+      void runSyncNow({ quiet: true }).catch(() => {})
+    }, 10 * 60 * 1000)
+    if (typeof timer.unref === 'function') timer.unref()
+    return () => clearInterval(timer)
   })
 
   log('info', 'memory-center loaded', { dataDir: DATA_DIR })

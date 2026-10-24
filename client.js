@@ -813,7 +813,27 @@ window.__ModuleLoader__.load({
 
     function ItemEditor({ data, item, onClose }) {
       const [title, setTitle] = useState(item ? item.title : '')
-      const [body, setBody] = useState(item ? item.body : '')
+      // 列表快照只给摘要，正文要在打开编辑时按 id 单独取
+      const needsBody = Boolean(item) && typeof item.body !== 'string'
+      const [body, setBody] = useState(item && typeof item.body === 'string' ? item.body : '')
+      const [bodyReady, setBodyReady] = useState(!needsBody)
+
+      useEffect(() => {
+        if (!needsBody) return undefined
+        let alive = true
+        api('item.get', { id: item.id })
+          .then((full) => {
+            if (!alive) return
+            setBody(String((full && full.item && full.item.body) || ''))
+            setBodyReady(true)
+          })
+          .catch(() => {
+            if (alive) setBodyReady(true)
+          })
+        return () => {
+          alive = false
+        }
+      }, [])
       const [tagText, setTagText] = useState(item ? item.tags.join(', ') : '')
       const [groupId, setGroupId] = useState(item ? item.groupId || '' : '')
       const [pinned, setPinned] = useState(item ? item.pinned : false)
@@ -2187,11 +2207,11 @@ window.__ModuleLoader__.load({
                   'div',
                   { className: 'dmc-item-body' },
                   ...highlightNodes(
-                    ((activeHits && activeHits.snippets[item.id]) || (item.body || '').slice(0, 260)),
+                    ((activeHits && activeHits.snippets[item.id]) || item.excerpt || ''),
                     query,
                   ),
                 )
-              : h('div', { className: 'dmc-item-body dmc-md' }, ...renderMarkdown(item.body)),
+              : h('div', { className: 'dmc-item-body dmc-md' }, ...renderMarkdown(item.excerpt || item.body || '')),
           h(
             'div',
             { className: 'dmc-actions' },
