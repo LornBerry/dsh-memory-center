@@ -199,11 +199,34 @@
 | AC28 | `DSH_MEMORY_MAX_CHARS` 可在容量弹窗里用拉条改（4000–50000，步进 1000），应用后注入上限与压缩线立即重算并写入 `config.json` 的 `maxChars`，刷新/重启后仍生效；设了该环境变量时拉条只读并说明原因；越界值被拒 | `node dev/session-default.test.mjs` + 手动 |
 | AC29 | 面板工具栏的「新会话默认」可选「每次都问 / 不加载 / 全部加载 / 当前会话选的文件夹」，写入 `config.json` 的 `sessionDefault`；设成非 `ask` 后新会话不再弹询问卡片且按默认注入，单个会话自己的选择覆盖默认，「清除本会话选择」后退回默认 | `node dev/session-default.test.mjs` |
 | AC30 | 两条说法冲突的记忆（同为启用、未归档）被判为同主题：注入时旧版带〔旧版…以「<最新标题>」为准〕、头部有统一说明、`stats.stale=1`；检索命中旧版时行尾带同款提示；面板条目出现「旧版」徽标、左栏出现「同主题 N 组 · 旧版 M 条」；归档/停用条目不参与；同一分钟内写入的不标新旧 | `node dev/topic.test.mjs` + `node dev/smoke-client.mjs` |
+| AC31 | 导出文件 `version` 高于当前支持的 `EXPORT_FORMAT_VERSION` 时拒绝导入并提示升级，不降级解析；只增字段的变更不升 version（规则见 F18 与格式增补表） | `node dev/import-anchor.test.mjs` |
 | AC31 | 删除记录可一次清空：`deleted.prune { all: true }` 清掉全部墓碑并返回剩余 0，默认调用只清超过保留天数的那些，正常条目与 `store.json` 结构不受影响 | `node dev/recycle.test.mjs` |
 
 | AC31 | 同一会话内 `memory_write` 最多 5 条待确认，第 6 条被拒且不落库 | `node dev/memory-write.test.mjs` |
 | AC32 | 后台失败（备份/清理/同步/回收站清理）写入 `<数据目录>/errors.jsonl` 并保留最近 100 条，设置页顶部显示最近 6 条；无失败时不显示该区域 | `node dev/smoke-client.mjs` |
 | AC33 | 记忆正文里的 markdown 链接只渲染 `http`/`https`/`file`，其它协议降级为纯文本 | `node dev/smoke-client.mjs` |
+
+### F18 导出格式演进规则（v0.9.9，评审建议）
+
+导出文件是**外部产物**：一旦发出去，历史副本会散落在用户的网盘、备份盘、聊天记录里，插件收不回来。
+所以格式演进只做加法，并且把规则写死：
+
+- `version` 表示「结构基线」，**不是**每次发版递增的插件版本号。
+- **只增字段，不改语义**：新增字段不升 `version`。老导入端忽略未知字段；新导入端遇缺失字段走默认值或按内容重判（例如锚点缺失时走 `resolveAnchor`）。
+- **禁止删字段、改字段名、改字段类型**：删了不会报错，只会静默丢数据。
+- **语义变更才升 `version`**：字段含义改变、字段删除、字段类型改变。
+- `version` 高于当前支持值时**拒绝导入**并提示升级插件，不尝试降级解析——读不了是小事，静默丢字段是数据事故。
+
+配套护栏在 `parseImportPayload`：`const formatVersion = Number(parsed.version) || 1`，大于 `EXPORT_FORMAT_VERSION` 直接 `fail`。
+
+#### 格式增补表（append-only，只加行不改行）
+
+| 格式版本 | 插件版本 | 日期 | 变更 |
+|---|---|---|---|
+| v1 | v0.9.5 及更早 | 2026-10-23 | 基线：title / body / tags / group / enabled / pinned / status / createdAt / updatedAt |
+| v1 | v0.9.7 | 2026-10-24 | + anchorMode / anchorSource / anchorWhy（纯增字段，不升 version） |
+| v1 | v0.9.8 | 2026-10-24 | 导入端尊重 status：pending 候选不会被转正；Markdown 导出改用过滤后的条目集合 |
+| v1 | v0.9.9 | 2026-10-24 | `version` 从死字段变成护栏（高于当前基线则拒绝导入） |
 
 ## 5. 非目标（v1 不做）
 

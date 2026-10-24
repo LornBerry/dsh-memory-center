@@ -159,6 +159,19 @@ expect('Markdown 导出不含已删除条目', md.markdown.includes('已删除�
 expect('Markdown 导出仍含正常条目', md.markdown.includes('部署纪律'), (v) => v === true, '')
 
 for (const dir of [dirA, dirB, dirC, dirD]) await fs.rm(dir, { recursive: true, force: true })
+
+// F：格式版本护栏——来自更新格式的文件必须拒绝，不降级解析
+const dirE = await fs.mkdtemp(path.join(os.tmpdir(), 'dmc-exp-e-'))
+const e = await boot(dirE, 'e')
+const future = await e.call({
+  op: 'import.apply',
+  payload: JSON.stringify({ version: 99, items: [{ title: '未来格式', body: 'x' }] }),
+})
+expect('格式版本高于当前支持值时被拒', future.ok, (v) => v === false, JSON.stringify(future).slice(0, 160))
+expect('拒绝理由提到版本', (future.error || '').includes('v99'), (v) => v === true, future.error || '')
+const v1 = await e.call({ op: 'import.apply', payload: JSON.stringify({ version: 1, items: [{ title: '正常格式', body: 'x' }] }) })
+expect('version 1 的文件仍可导入', v1.ok, (v) => v === true, JSON.stringify(v1).slice(0, 120))
+await fs.rm(dirE, { recursive: true, force: true })
 if (prevDir === undefined) delete process.env.DSH_MEMORY_DIR
 else process.env.DSH_MEMORY_DIR = prevDir
 if (prevCfg !== undefined) process.env.DSH_MEMORY_CONFIG = prevCfg

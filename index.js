@@ -45,6 +45,12 @@ const ENV_MAX_CHARS = parseMaxChars(process.env.DSH_MEMORY_MAX_CHARS)
 let MAX_INJECT_CHARS = ENV_MAX_CHARS ?? DEFAULT_MAX_CHARS
 
 /**
+ * 导出文件的「结构基线」，不是插件版本号。
+ * 只增字段不升；删字段、改字段名/类型、改语义才升（规则见 SPEC「导出格式演进规则」）。
+ */
+const EXPORT_FORMAT_VERSION = 1
+
+/**
  * 压缩阈值：记忆总量超过「上限 × 该比例」时，注入开始压缩（超出部分只给标题）。
  * 默认 80%——留 20% 余量给统计行、索引清单和以后新增的记忆，避免一加就爆。
  * 优先级：环境变量 DSH_MEMORY_COMPRESS_RATIO > 面板里拖过的值（存在 config.json 的 injectRatio）> 0.8。
@@ -1456,6 +1462,12 @@ function parseImportPayload(payload) {
     }
   }
   if (!parsed || typeof parsed !== 'object') throw fail('导入内容不是合法的 JSON 对象')
+  const formatVersion = Number(parsed.version) || 1
+  if (formatVersion > EXPORT_FORMAT_VERSION) {
+    throw fail(
+      `这个导出文件来自更新的格式（v${formatVersion}，当前支持 v${EXPORT_FORMAT_VERSION}）。请先升级插件再导入，避免旧版按 v1 规则静默解析导致字段丢失。`,
+    )
+  }
   const items = Array.isArray(parsed.items) ? parsed.items : Array.isArray(parsed) ? parsed : []
   const groups = Array.isArray(parsed.groups) ? parsed.groups : []
   return { groups, items }
@@ -2345,7 +2357,7 @@ async function runOp(op, payload) {
       const exportItems = visibleItems(state)
       const json = JSON.stringify(
         {
-          version: 1,
+          version: EXPORT_FORMAT_VERSION,
           exportedAt: nowIso(),
           groups: sortGroups(state.groups).map((group) => ({ name: group.name, order: group.order })),
           items: sortItems(exportItems).map((item) => ({
