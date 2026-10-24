@@ -188,6 +188,8 @@ window.__ModuleLoader__.load({
         .dmc-bottom-bar strong { margin-right: 2px; }
         /* 视图切换 + 排序 */
         .dmc-toolbar-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+        .dmc-error-box { margin: 8px 14px 0; padding: 8px 10px; border: 1px solid rgba(217,83,79,.45); border-radius: 8px; background: rgba(217,83,79,.08); display: flex; flex-direction: column; gap: 3px; }
+        .dmc-error-box strong { font-size: 12px; color: #d9534f; }
         .dmc-icon-group { display: inline-flex; border: 1px solid rgba(127,127,127,.3); border-radius: 8px; overflow: hidden; }
         .dmc-icon-btn { background: none; border: 0; padding: 4px 9px; font: inherit; font-size: 12px; color: inherit; cursor: pointer; opacity: .65; }
         .dmc-icon-btn.is-active { background: rgba(93,140,255,.22); opacity: 1; }
@@ -367,9 +369,16 @@ window.__ModuleLoader__.load({
         else if (token.startsWith('`')) nodes.push(h('code', { key }, token.slice(1, -1)))
         else if (token.startsWith('[')) {
           const link = /^\[([^\]]+)\]\(([^)\s]+)\)$/.exec(token)
-          nodes.push(
-            h('a', { key, href: link[2], target: '_blank', rel: 'noreferrer noopener' }, link[1]),
-          )
+          // 只放行 http(s)/mailto：javascript: 与 data: 放进 href 会直接执行脚本
+          if (link && /^(https?:|mailto:)/i.test(link[2])) {
+            nodes.push(
+              h('a', { key, href: link[2], target: '_blank', rel: 'noreferrer noopener' }, link[1]),
+            )
+          } else if (link) {
+            nodes.push(h('span', { key }, link[1]))
+          } else {
+            nodes.push(token)
+          }
         } else nodes.push(h('em', { key }, token.slice(1, -1)))
         last = match.index + token.length
       }
@@ -1716,6 +1725,7 @@ window.__ModuleLoader__.load({
       const [exporting, setExporting] = useState(false)
       const [groupDialog, setGroupDialog] = useState(null)
       const [preview, setPreview] = useState(null)
+      const [errorsOpen, setErrorsOpen] = useState(false)
       const [selected, setSelected] = useState((props && props.debugSelected) || [])
       const [menu, setMenu] = useState((props && props.debugMenu) || null)
       const [choice, setChoice] = useState(null)
@@ -3601,6 +3611,29 @@ window.__ModuleLoader__.load({
           ),
           h('span', { className: 'dmc-card-hint' }, '改完立即落盘，两个入口同步。'),
         ),
+        data && data.errors && data.errors.length
+          ? h(
+              'div',
+              { className: 'dmc-error-box' },
+              h('strong', null, `最近失败 ${data.errors.length} 次`),
+              h(
+                'div',
+                { className: 'dmc-card-hint' },
+                '这些操作失败了但主流程没中断（备份、清理、同步之类）。数据大概率还在，但别把它当成「已备份」。',
+              ),
+              ...data.errors
+                .slice()
+                .reverse()
+                .slice(0, 6)
+                .map((entry, index) =>
+                  h(
+                    'div',
+                    { key: `err${index}`, className: 'dmc-card-hint' },
+                    `${entry.scope} · ${new Date(entry.at).toLocaleString('zh-CN')} · ${entry.message}`,
+                  ),
+                ),
+            )
+          : null,
         h(MemoryPanel, { embedded: true }),
         syncOpen
           ? h(SyncDialog, {

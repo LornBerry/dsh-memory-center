@@ -438,6 +438,9 @@ for (const { options, component } of registrations) {
         else if (tag === ' sort-updated' && !(posNew < posOld)) fail.push('选「按修改时间顺序」后，时间更新的条目应排在前面')
         else if (tag === ' sort-updated-asc' && !(posOld < posNew)) fail.push('内部值 updated-asc 时，时间更旧的条目应排在前面')
       }
+      if (options.name === 'main' && html.includes('href="javascript:')) {
+        fail.push('markdown 链接协议白名单失效：javascript: 被渲染成了 href')
+      }
       if (options.name === 'main' && tag === ' menu-folder') {
         if (!html.includes('重命名')) fail.push('文件夹菜单缺少「重命名」')
         if (!html.includes('删除文件夹')) fail.push('文件夹菜单缺少「删除文件夹」')

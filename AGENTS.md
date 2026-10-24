@@ -74,6 +74,12 @@
      `git -c http.curloptResolve=github.com:443:<ip> push origin main`，成功后就 `git config http.curloptResolve ...` 记下来。
 - 需要直接访问 github.com 的 HTTP 接口时：`curl --resolve github.com:443:140.82.121.3 ...`。
 
+## 文档同步规则
+
+- 新增/修改一个 op、一个插槽、一条注入规则，必须同时更新：`SPEC.md` 的验收表、`README.md` 对应章节、`AGENTS.md` 自测清单、`dev/release.mjs` 的测试清单。
+- 不写测试的新功能视为未完成。测试要能被 `npm test`（`dev/run-all.mjs`）一次跑全。
+- 涉及写盘/清理/同步的新路径，失败时必须走 `recordError`（写 `errors.jsonl`），不允许空 catch 静默吞掉。
+
 ## 自测
 
 ```bash

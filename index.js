@@ -226,13 +226,34 @@ function backupPath(kind, stamp = newStamp(), dir = BACKUP_DIR) {
 }
 
 /** 复制一份备份（源文件保留）。失败不阻断主流程。dir 默认当前数据目录的 backups/。 */
+/**
+ * 最近的非致命失败（备份写不出、同步失败、清理失败……）。
+ *
+ * 这些路径失败时不能中断主流程，但也不能静默——否则用户以为「有备份」，
+ * 实际上备份一直在失败。面板里能看到最近 12 条，点开是 scope + 时间 + 原因。
+ */
+const RECENT_ERROR_LIMIT = 12
+const recentErrors = []
+
+function noteError(scope, error) {
+  try {
+    const message = String((error && error.message) || error || '未知错误')
+    recentErrors.push({ at: nowIso(), scope: String(scope), message: message.slice(0, 300) })
+    if (recentErrors.length > RECENT_ERROR_LIMIT) {
+      recentErrors.splice(0, recentErrors.length - RECENT_ERROR_LIMIT)
+    }
+  } catch {
+    /* 记录错误本身绝不能再抛 */
+  }
+}
+
 async function writeBackup(sourceFile, kind, dir = BACKUP_DIR) {
   try {
     await fs.mkdir(dir, { recursive: true })
     await fs.copyFile(sourceFile, backupPath(kind, newStamp(), dir))
     await pruneBackups(BACKUP_KEEP_PER_KIND, dir)
-  } catch {
-    /* 备份失败不影响主流程 */
+  } catch (error) {
+    noteError(`backup:${kind}`, error)
   }
 }
 
@@ -244,7 +265,8 @@ async function writeJsonBackup(kind, value, dir = BACKUP_DIR) {
     await fs.writeFile(file, JSON.stringify(value, null, 2), 'utf8')
     await pruneBackups(BACKUP_KEEP_PER_KIND, dir)
     return path.basename(file)
-  } catch {
+  } catch (error) {
+    noteError(`backup-json:${kind}`, error)
     return ''
   }
 }
@@ -261,8 +283,8 @@ async function moveToBackup(sourceFile, kind, dir = BACKUP_DIR) {
       await fs.unlink(sourceFile).catch(() => {})
     }
     await pruneBackups(BACKUP_KEEP_PER_KIND, dir)
-  } catch {
-    /* 备份失败不影响主流程 */
+  } catch (error) {
+    noteError(`backup-move:${kind}`, error)
   }
 }
 
@@ -1283,6 +1305,7 @@ function snapshot(state, sessionId, extra) {
       .filter(([, selection]) => selection && selection.paused)
       .map(([id, selection]) => ({ sessionId: id, at: selection.paused.at })),
     conflict: lastConflict,
+    errors: recentErrors.slice(),
     topics: topicView(state),
     preview: injection.text,
     injection: injection.stats,
@@ -2573,6 +2596,17 @@ function registerTools(ctx) {
       if (!title && !body.trim()) return '写入失败：标题与正文不能同时为空。'
       const tags = normalizeTags(String(args?.tags ?? '').split(','))
       const { id: sessionId, headerTitle } = sessionOf(exec)
+      // 系统提示里写的「一次对话最多 3 条」只是建议，模型可以不听；这里用代码兜住，
+      // 免得循环调用把待确认区刷爆（每条都真实落盘，用户得逐条处理）。
+      const PENDING_LIMIT = 5
+      if (sessionId) {
+        const pendingCount = state.items.filter(
+          (entry) => entry.sessionId === sessionId && entry.status === 'pending',
+        ).length
+        if (pendingCount >= PENDING_LIMIT) {
+          return `本会话待确认记忆已有 ${pendingCount} 条（上限 ${PENDING_LIMIT}），先把它们在「记忆」面板里转正或删除，再写新的。`
+        }
+      }
       const item = {
         id: `m-${randomUUID().slice(0, 8)}`,
         title: title || '未命名记忆',

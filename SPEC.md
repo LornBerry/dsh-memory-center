@@ -201,6 +201,10 @@
 | AC30 | 两条说法冲突的记忆（同为启用、未归档）被判为同主题：注入时旧版带〔旧版…以「<最新标题>」为准〕、头部有统一说明、`stats.stale=1`；检索命中旧版时行尾带同款提示；面板条目出现「旧版」徽标、左栏出现「同主题 N 组 · 旧版 M 条」；归档/停用条目不参与；同一分钟内写入的不标新旧 | `node dev/topic.test.mjs` + `node dev/smoke-client.mjs` |
 | AC31 | 删除记录可一次清空：`deleted.prune { all: true }` 清掉全部墓碑并返回剩余 0，默认调用只清超过保留天数的那些，正常条目与 `store.json` 结构不受影响 | `node dev/recycle.test.mjs` |
 
+| AC31 | 同一会话内 `memory_write` 最多 5 条待确认，第 6 条被拒且不落库 | `node dev/memory-write.test.mjs` |
+| AC32 | 后台失败（备份/清理/同步/回收站清理）写入 `<数据目录>/errors.jsonl` 并保留最近 100 条，设置页顶部显示最近 6 条；无失败时不显示该区域 | `node dev/smoke-client.mjs` |
+| AC33 | 记忆正文里的 markdown 链接只渲染 `http`/`https`/`file`，其它协议降级为纯文本 | `node dev/smoke-client.mjs` |
+
 ## 5. 非目标（v1 不做）
 
 - 不做云同步、不做 Hindsight 双向同步。

@@ -27,6 +27,11 @@
   "engines": {
     "node": ">=22"
   },
+  "scripts": {
+    "test": "node dev/run-all.mjs",
+    "doctor": "node dev/doctor.mjs",
+    "release": "node dev/release.mjs"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",

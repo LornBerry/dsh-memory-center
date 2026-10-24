@@ -140,6 +140,17 @@ expect('硬性措辞初判为完全锚点', hard?.anchorMode, (v) => v === 'full
 expect('硬性理由点名措辞', hard?.anchorWhy, (v) => /必须|禁止/.test(String(v)), '理由里应出现命中的词')
 expect('偏好措辞初判为权重锚点', pref?.anchorMode, (v) => v === 'weight', '尽量/统一 应判 weight')
 
+/* P0：同一会话的待确认上限（防模型循环写入把待确认区塞爆） */
+const capResults = []
+for (let i = 0; i < 6; i += 1) {
+  capResults.push(await write.execute({ title: `上限测试${i}`, body: '内容' }, sessionExec('s9')))
+}
+const capTexts = capResults.map((result) => String(result?.[0]?.text ?? result))
+expect('第 1—5 条待确认写入正常', capTexts.slice(0, 5).every((text) => text.includes('待确认')), (v) => v === true, capTexts[0])
+expect('第 6 条被上限挡住', /上限|太多|转正/.test(capTexts[5]), (v) => v === true, capTexts[5])
+const capped = JSON.parse(await fs.readFile(path.join(dir, 'store.json'), 'utf8'))
+expect('被挡住的没有落库', capped.items.filter((item) => item.title.startsWith('上限测试')).length, (v) => v === 5)
+
 await fs.rm(tmpRoot, { recursive: true, force: true })
 console.log(failures.length ? `\nMEMORY WRITE FAILED: ${failures.join(', ')}` : '\nMEMORY WRITE OK')
 process.exit(failures.length ? 1 : 0)
