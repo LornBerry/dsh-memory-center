@@ -1828,7 +1828,7 @@ window.__ModuleLoader__.load({
           if (activeHits) {
             if (!activeHits.ids.includes(item.id)) return false
           } else {
-            const haystack = `${item.title}\n${item.body}\n${item.tags.join(' ')}`.toLowerCase()
+            const haystack = `${item.title}\n${item.excerpt || item.body || ''}\n${item.tags.join(' ')}`.toLowerCase()
             if (!haystack.includes(raw.toLowerCase())) return false
           }
         }
@@ -3144,7 +3144,7 @@ window.__ModuleLoader__.load({
 
       const keyword = query.trim().toLowerCase()
       const listed = (keyword
-        ? items.filter((item) => `${item.title}\n${item.body}\n${item.tags.join(' ')}`.toLowerCase().includes(keyword))
+        ? items.filter((item) => `${item.title}\n${item.excerpt || item.body || ''}\n${item.tags.join(' ')}`.toLowerCase().includes(keyword))
         : items
       )
         .slice()
