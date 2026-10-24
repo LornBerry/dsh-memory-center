@@ -74,7 +74,7 @@ window.__ModuleLoader__.load({
         .dmc-row-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .dmc-count { font-size: 11px; opacity: .6; font-variant-numeric: tabular-nums; }
         .dmc-main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-        .dmc-toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid rgba(127,127,127,.18); flex-wrap: wrap; }
+        .dmc-toolbar { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid rgba(127,127,127,.18); flex-wrap: wrap; }
         /* 工具栏里所有控件统一 28px 高，文字与搜索框在同一水平线上 */
         .dmc-toolbar .dmc-btn, .dmc-toolbar .dmc-search, .dmc-toolbar .dmc-sort, .dmc-toolbar .dmc-icon-btn { height: 28px; }
         /* 会话信息 / 新会话默认：不再沿用工具栏的分隔线，避免三行「工具栏」叠在一起 */
@@ -84,7 +84,7 @@ window.__ModuleLoader__.load({
         .dmc-banner { margin: 6px 8px; padding: 6px 10px; border-radius: 8px; font-size: 12px; cursor: pointer; background: rgba(90,140,255,.14); border: 1px solid rgba(90,140,255,.35); }
         .dmc-banner:hover { background: rgba(90,140,255,.22); }
         .dmc-banner.is-warn { background: rgba(240,160,60,.16); border-color: rgba(240,160,60,.45); }
-        .dmc-search { flex: 1 1 180px; min-width: 120px; height: 28px; box-sizing: border-box; padding: 0 10px; border-radius: 8px; border: 1px solid rgba(127,127,127,.3); background: transparent; color: inherit; font-size: 13px; }
+        .dmc-search { flex: 0 1 260px; min-width: 120px; height: 28px; box-sizing: border-box; padding: 0 10px; border-radius: 8px; border: 1px solid rgba(127,127,127,.3); background: transparent; color: inherit; font-size: 13px; }
         .dmc-btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 4px 10px; border-radius: 8px; border: 1px solid rgba(127,127,127,.32); background: transparent; color: inherit; cursor: pointer; font-size: 12px; line-height: 1.5; white-space: nowrap; }
         .dmc-btn:hover { background: rgba(127,127,127,.14); }
         .dmc-btn.primary { background: rgba(90,140,255,.9); border-color: transparent; color: #fff; }
@@ -203,7 +203,7 @@ window.__ModuleLoader__.load({
         .dmc-bottom-bar { position: sticky; bottom: 0; z-index: 30; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px 10px; margin: 0 14px 10px; border-radius: 10px; background: rgba(93,140,255,.16); border: 1px solid rgba(93,140,255,.45); backdrop-filter: blur(6px); box-shadow: 0 -6px 18px rgba(0,0,0,.12); }
         .dmc-bottom-bar strong { margin-right: 2px; }
         /* 视图切换 + 排序 */
-        .dmc-toolbar-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+        .dmc-toolbar-right { display: flex; align-items: center; gap: 6px; margin-left: 8px; }
         .dmc-error-box { margin: 8px 14px 0; padding: 8px 10px; border: 1px solid rgba(217,83,79,.45); border-radius: 8px; background: rgba(217,83,79,.08); display: flex; flex-direction: column; gap: 3px; }
         .dmc-error-box strong { font-size: 12px; color: #d9534f; }
         .dmc-icon-group { display: inline-flex; height: 28px; border: 1px solid rgba(127,127,127,.3); border-radius: 8px; overflow: hidden; }
