@@ -53,6 +53,36 @@ await fs.writeFile(
         createdAt: now,
         updatedAt: now,
       },
+      {
+        id: 'm-archived',
+        title: '归档条目',
+        body: '归档的正文也应该只给摘要，否则归档区越长越占地方',
+        tags: [],
+        groupId: null,
+        enabled: true,
+        pinned: false,
+        status: 'active',
+        source: 'manual',
+        order: 2,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: now,
+      },
+      {
+        id: 'm-deleted',
+        title: '回收站条目',
+        body: '回收站里的正文也应该只给摘要，用户不会天天清',
+        tags: [],
+        groupId: null,
+        enabled: true,
+        pinned: false,
+        status: 'active',
+        source: 'manual',
+        order: 3,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: now,
+      },
     ],
     deleted: [],
   }),
@@ -147,6 +177,44 @@ expect('item.get 能拿到完整正文', full.item && full.item.body, (v) => v =
 
 const short = snapshot.items.find((item) => item.id === 'm-short')
 expect('短条目 excerpt 就是原文', short.excerpt, (v) => v === '很短', String(short.excerpt))
+
+// 归档区与回收站同样是「只增不减」的部分，一样不能整段传正文
+expect('归档视图有一条', snapshot.archived.length, (v) => v === 1, String(snapshot.archived.length))
+expect(
+  '归档视图也不带 body',
+  snapshot.archived.every((item) => item.body === undefined),
+  (v) => v === true,
+  'archiveView 没接 slimItem：归档越多，快照越大',
+)
+expect(
+  '归档条目仍有 excerpt',
+  snapshot.archived[0] && typeof snapshot.archived[0].excerpt === 'string',
+  (v) => v === true,
+  '缺 excerpt',
+)
+expect(
+  '归档条目 chars 仍按原文算',
+  snapshot.archived[0] && snapshot.archived[0].chars,
+  (v) => v === '归档条目'.length + '归档的正文也应该只给摘要，否则归档区越长越占地方'.length,
+  '先 slim 再算 chars 会把长度算错',
+)
+
+expect('回收站视图有一条', snapshot.deleted.length, (v) => v === 1, String(snapshot.deleted.length))
+expect(
+  '回收站视图也不带 body',
+  snapshot.deleted.every((item) => item.body === undefined),
+  (v) => v === true,
+  'recycleView 没接 slimItem：回收站是临时堆积，用户不会天天清',
+)
+expect(
+  '回收站条目仍有 deletedAt',
+  snapshot.deleted[0] && Boolean(snapshot.deleted[0].deletedAt),
+  (v) => v === true,
+  '回收站元信息丢了',
+)
+
+const archivedFull = await call({ op: 'item.get', id: 'm-archived' })
+expect('归档条目仍能按需读全文', archivedFull.item && archivedFull.item.body, (v) => String(v).length > 0, '正文没回来')
 
 await fs.rm(tmpRoot, { recursive: true, force: true })
 

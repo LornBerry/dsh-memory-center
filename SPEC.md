@@ -204,7 +204,8 @@
 
 | AC31 | 同一会话内 `memory_write` 最多 5 条待确认，第 6 条被拒且不落库 | `node dev/memory-write.test.mjs` |
 | AC32 | 后台失败（备份/清理/同步/回收站清理）写入 `<数据目录>/errors.jsonl` 并保留最近 100 条，设置页顶部显示最近 6 条；无失败时不显示该区域 | `node dev/smoke-client.mjs` |
-| AC33 | 记忆正文里的 markdown 链接只渲染 `http`/`https`/`file`，其它协议降级为纯文本 | `node dev/smoke-client.mjs` |
+| AC33 | 记忆正文里的 markdown 链接只渲染 `http`/`https`/`mailto`，其它协议（含 `file:`）降级为纯文本 | `node dev/smoke-client.mjs` |
+| AC34 | `state` 快照的 `items` / `archived` / `deleted` 三类列表都只带 `excerpt`（正文前 120 字）与 `bodyChars`，不带 `body`；归档与回收站条目仍可用 `item.get` 取全文，`archiveView` 的 `chars` 仍按原文长度算 | `node dev/snapshot-shape.test.mjs` |
 
 ### F18 导出格式演进规则（v0.9.9，评审建议）
 

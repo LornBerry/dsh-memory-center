@@ -1191,16 +1191,8 @@ function archivedItems(state) {
 /** 归档层：不参与注入与默认检索，但内容完整保留，随时可还原。 */
 function archiveView(state) {
   return archivedItems(state).map((item) => ({
-    id: item.id,
-    title: item.title,
-    body: item.body,
-    tags: item.tags,
-    groupId: item.groupId,
-    status: item.status,
-    anchorMode: item.anchorMode,
-    anchorSource: item.anchorSource,
+    ...slimItem(item),
     anchorWhy: item.anchorWhy ?? '',
-    source: item.source,
     archivedAt: item.archivedAt,
     mergedInto: item.mergedInto ?? null,
     chars: item.title.length + String(item.body ?? '').length,
@@ -1258,16 +1250,8 @@ function recycledItems(state) {
 /** 回收站里只回必要字段：面板要能显示标题/内容片段，但不需要全部状态。 */
 function recycleView(state) {
   return recycledItems(state).map((item) => ({
-    id: item.id,
-    title: item.title,
-    body: item.body,
-    tags: item.tags,
-    groupId: item.groupId,
-    status: item.status,
-    anchorMode: item.anchorMode,
-    anchorSource: item.anchorSource,
+    ...slimItem(item),
     anchorWhy: item.anchorWhy ?? '',
-    source: item.source,
     deletedAt: item.deletedAt,
   }))
 }
