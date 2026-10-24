@@ -407,6 +407,9 @@ for (const { options, component } of registrations) {
         // 同主题旧版标注：徽标 + 左栏汇总入口都要在默认视图里出现
         if (!html.includes('旧版')) fail.push('同主题旧版没有在条目上标出来')
         if (!html.includes('同主题 1 组')) fail.push('左栏缺少「同主题 N 组」汇总入口')
+        // 独立面板（侧栏「记忆」）必须保留这两个入口；嵌进设置页时才隐藏
+        if (!html.includes('存储位置')) fail.push('主面板工具栏缺少「存储位置」按钮')
+        if (!html.includes('云端同步')) fail.push('主面板工具栏缺少「云端同步」按钮')
       }
       if (options.name === 'main' && tag === ' menu-item') {
         if (!html.includes('存放到文件夹')) fail.push('条目右键菜单缺少「存放到文件夹」分组')
@@ -424,6 +427,8 @@ for (const { options, component } of registrations) {
         if (!html.includes('更改')) fail.push('设置页缺少「更改…」按钮')
         if (!html.includes('复制')) fail.push('设置页缺少「复制」按钮')
         if (!html.includes('E:\\dsh-data\\memory') && !html.includes('E:\\')) fail.push('设置页没有显示库路径')
+        // 嵌进来的面板不要再重复工具栏入口：上面那行 lead 已有「更改…」与「云端同步…」
+        if (html.includes('存储位置')) fail.push('设置页嵌面板里不该出现「存储位置」按钮（上面「更改…」已覆盖）')
       }
       if (options.name === 'main' && tag === ' pending') {
         if (!html.includes('全部转正')) fail.push('待确认页签缺少「全部转正」')

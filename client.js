@@ -2492,16 +2492,22 @@ window.__ModuleLoader__.load({
             h('button', { className: 'dmc-btn', onClick: () => setImporting(true) }, '导入'),
             h('button', { className: 'dmc-btn', onClick: () => setExporting(true) }, '导出'),
             h('button', { className: 'dmc-btn', onClick: () => setPreview(data.preview) }, '预览注入'),
-            h('button', { className: 'dmc-btn', onClick: () => setStorageOpen(true) }, '存储位置'),
-            h(
-              'button',
-              {
-                className: 'dmc-btn',
-                title: '可选：把记忆同步到你自己的 Git 仓库或网盘',
-                onClick: () => setSyncOpen(true),
-              },
-              data.sync && data.sync.mode && data.sync.mode !== 'off' ? '云端同步 · 已开' : '云端同步',
-            ),
+            // 嵌进「设置 → 记忆库」时，上面那行 lead 已经有「更改…」和「云端同步…」，
+            // 这里再放一遍就是重复入口；独立面板（侧栏「记忆」）仍然保留。
+            embedded
+              ? null
+              : h('button', { className: 'dmc-btn', onClick: () => setStorageOpen(true) }, '存储位置'),
+            embedded
+              ? null
+              : h(
+                  'button',
+                  {
+                    className: 'dmc-btn',
+                    title: '可选：把记忆同步到你自己的 Git 仓库或网盘',
+                    onClick: () => setSyncOpen(true),
+                  },
+                  data.sync && data.sync.mode && data.sync.mode !== 'off' ? '云端同步 · 已开' : '云端同步',
+                ),
             h(
               'button',
               {
