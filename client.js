@@ -74,12 +74,18 @@ window.__ModuleLoader__.load({
         .dmc-row-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .dmc-count { font-size: 11px; opacity: .6; font-variant-numeric: tabular-nums; }
         .dmc-main { flex: 1 1 auto; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-        .dmc-toolbar { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid rgba(127,127,127,.18); flex-wrap: wrap; }
+        .dmc-toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid rgba(127,127,127,.18); flex-wrap: wrap; }
+        /* 工具栏里所有控件统一 28px 高，文字与搜索框在同一水平线上 */
+        .dmc-toolbar .dmc-btn, .dmc-toolbar .dmc-search, .dmc-toolbar .dmc-sort, .dmc-toolbar .dmc-icon-btn { height: 28px; }
+        /* 会话信息 / 新会话默认：不再沿用工具栏的分隔线，避免三行「工具栏」叠在一起 */
+        .dmc-subbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 6px 14px 0; font-size: 12px; }
+        .dmc-default-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 6px 14px 10px; padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(127,127,127,.16); background: rgba(127,127,127,.05); }
+        .dmc-default-row .dmc-card-hint { opacity: .6; }
         .dmc-banner { margin: 6px 8px; padding: 6px 10px; border-radius: 8px; font-size: 12px; cursor: pointer; background: rgba(90,140,255,.14); border: 1px solid rgba(90,140,255,.35); }
         .dmc-banner:hover { background: rgba(90,140,255,.22); }
         .dmc-banner.is-warn { background: rgba(240,160,60,.16); border-color: rgba(240,160,60,.45); }
-        .dmc-search { flex: 1 1 180px; min-width: 120px; padding: 5px 9px; border-radius: 8px; border: 1px solid rgba(127,127,127,.3); background: transparent; color: inherit; font-size: 13px; }
-        .dmc-btn { padding: 4px 10px; border-radius: 8px; border: 1px solid rgba(127,127,127,.32); background: transparent; color: inherit; cursor: pointer; font-size: 12px; line-height: 1.5; white-space: nowrap; }
+        .dmc-search { flex: 1 1 180px; min-width: 120px; height: 28px; box-sizing: border-box; padding: 0 10px; border-radius: 8px; border: 1px solid rgba(127,127,127,.3); background: transparent; color: inherit; font-size: 13px; }
+        .dmc-btn { display: inline-flex; align-items: center; justify-content: center; gap: 4px; padding: 4px 10px; border-radius: 8px; border: 1px solid rgba(127,127,127,.32); background: transparent; color: inherit; cursor: pointer; font-size: 12px; line-height: 1.5; white-space: nowrap; }
         .dmc-btn:hover { background: rgba(127,127,127,.14); }
         .dmc-btn.primary { background: rgba(90,140,255,.9); border-color: transparent; color: #fff; }
         .dmc-btn.danger { color: #e5534b; border-color: rgba(229,83,75,.5); }
@@ -127,7 +133,17 @@ window.__ModuleLoader__.load({
         .dmc-sync-option input { margin-top: 3px; }
         .dmc-sync-title { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
         .dmc-input, .dmc-textarea, .dmc-select { width: 100%; box-sizing: border-box; padding: 6px 9px; border-radius: 8px; border: 1px solid rgba(127,127,127,.3); background: rgba(127,127,127,.08); color: inherit; font-size: 13px; font-family: inherit; }
-  .dmc-select-mini { width: auto; padding: 3px 6px; font-size: 12px; }
+        /* 设置行里的小下拉：圆角胶囊 + 自绘箭头，不再用浏览器原生样式 */
+        .dmc-select-mini {
+          width: auto; height: 26px; padding: 0 26px 0 10px; font-size: 12px; line-height: 1.4;
+          border-radius: 999px; border: 1px solid rgba(127,127,127,.3);
+          background-color: rgba(127,127,127,.08); color: inherit; cursor: pointer;
+          appearance: none; -webkit-appearance: none;
+          background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23999' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+          background-repeat: no-repeat; background-position: right 9px center;
+        }
+        .dmc-select-mini:hover { border-color: rgba(127,127,127,.5); }
+        .dmc-select-mini:focus-visible { outline: 2px solid rgba(93,140,255,.55); outline-offset: 1px; }
         .dmc-textarea { min-height: 120px; resize: vertical; line-height: 1.6; }
         .dmc-textarea.mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
         .dmc-preview { white-space: pre-wrap; word-break: break-word; font-size: 12px; line-height: 1.6; max-height: 46vh; overflow: auto; padding: 8px; border-radius: 8px; background: rgba(127,127,127,.1); }
@@ -190,10 +206,10 @@ window.__ModuleLoader__.load({
         .dmc-toolbar-right { display: flex; align-items: center; gap: 6px; margin-left: auto; }
         .dmc-error-box { margin: 8px 14px 0; padding: 8px 10px; border: 1px solid rgba(217,83,79,.45); border-radius: 8px; background: rgba(217,83,79,.08); display: flex; flex-direction: column; gap: 3px; }
         .dmc-error-box strong { font-size: 12px; color: #d9534f; }
-        .dmc-icon-group { display: inline-flex; border: 1px solid rgba(127,127,127,.3); border-radius: 8px; overflow: hidden; }
-        .dmc-icon-btn { background: none; border: 0; padding: 4px 9px; font: inherit; font-size: 12px; color: inherit; cursor: pointer; opacity: .65; }
+        .dmc-icon-group { display: inline-flex; height: 28px; border: 1px solid rgba(127,127,127,.3); border-radius: 8px; overflow: hidden; }
+        .dmc-icon-btn { display: inline-flex; align-items: center; justify-content: center; height: 100%; background: none; border: 0; padding: 0 10px; font: inherit; font-size: 12px; color: inherit; cursor: pointer; opacity: .65; }
         .dmc-icon-btn.is-active { background: rgba(93,140,255,.22); opacity: 1; }
-        .dmc-sort { font-size: 12px; padding: 4px 6px; border-radius: 8px; border: 1px solid rgba(127,127,127,.3); background: transparent; color: inherit; }
+        .dmc-sort { font-size: 12px; height: 28px; box-sizing: border-box; padding: 0 8px; border-radius: 8px; border: 1px solid rgba(127,127,127,.3); background: transparent; color: inherit; cursor: pointer; }
         /* 列表视图 */
         .dmc-listview .dmc-item { padding: 5px 10px; margin-bottom: 3px; }
         .dmc-listview .dmc-item-body, .dmc-listview .dmc-tags { display: none; }
@@ -2588,14 +2604,14 @@ window.__ModuleLoader__.load({
           activeSessionId
             ? h(
                 'div',
-                { className: 'dmc-toolbar' },
+                { className: 'dmc-subbar' },
                 h('span', { className: 'dmc-card-hint' }, `当前会话 #${String(activeSessionId).replace(/^session-/, '').slice(0, 8)}：`),
                 h(SessionPicker, { data, sessionId: activeSessionId, compact: false }),
               )
-            : h('div', { className: 'dmc-toolbar' }, h('span', { className: 'dmc-card-hint' }, '先在对话里打开一个会话，才能决定本会话加载哪些记忆。')),
+            : h('div', { className: 'dmc-subbar' }, h('span', { className: 'dmc-card-hint' }, '先在对话里打开一个会话，才能决定本会话加载哪些记忆。')),
           h(
             'div',
-            { className: 'dmc-toolbar', style: { marginTop: '-6px' } },
+            { className: 'dmc-default-row' },
             h('span', { className: 'dmc-card-hint' }, '新会话默认：'),
             h(
               'select',
@@ -2621,7 +2637,7 @@ window.__ModuleLoader__.load({
               h('option', { value: 'all' }, '全部加载'),
               h('option', { value: 'custom' }, '当前会话选的文件夹'),
             ),
-            h('span', { className: 'dmc-card-hint' }, '设成「每次都问」以外的值后，新会话不再弹询问卡片。'),
+            h('span', { className: 'dmc-card-hint', style: { flexBasis: '100%' } }, '设成「每次都问」以外的值后，新会话不再弹询问卡片。'),
           ),
           h(
             'div',

@@ -429,6 +429,8 @@ for (const { options, component } of registrations) {
         if (!html.includes('E:\\dsh-data\\memory') && !html.includes('E:\\')) fail.push('设置页没有显示库路径')
         // 嵌进来的面板不要再重复工具栏入口：上面那行 lead 已有「更改…」与「云端同步…」
         if (html.includes('存储位置')) fail.push('设置页嵌面板里不该出现「存储位置」按钮（上面「更改…」已覆盖）')
+        // 但「暂停注入」上面没有，必须留着，不能被一起删掉
+        if (!html.includes('暂停注入')) fail.push('设置页嵌面板缺少「暂停注入」按钮')
       }
       if (options.name === 'main' && tag === ' pending') {
         if (!html.includes('全部转正')) fail.push('待确认页签缺少「全部转正」')
