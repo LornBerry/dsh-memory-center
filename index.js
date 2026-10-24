@@ -1489,7 +1489,7 @@ function planImport(state, parsed) {
       groupId: null,
       enabled: candidate.enabled !== false,
       pinned: candidate.pinned === true,
-      status: 'active',
+      status: candidate.status === 'pending' ? 'pending' : 'active',
       source: 'import',
       anchorMode: anchor.anchorMode,
       anchorSource: anchor.anchorSource,
@@ -2386,7 +2386,7 @@ async function runOp(op, payload) {
         ]),
         '## 未归类',
         '',
-        ...sortItems(state.items.filter((item) => !item.groupId)).flatMap((item) => [
+        ...sortItems(exportItems.filter((item) => !item.groupId)).flatMap((item) => [
           `### ${item.pinned ? '📌 ' : ''}${item.title}`,
           '',
           item.body,

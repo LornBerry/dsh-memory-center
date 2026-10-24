@@ -102,6 +102,7 @@ await fs.writeFile(
         updatedAt: '2026-05-02T00:00:00.000Z',
       }),
       fixtureItem({ order: 1 }),
+      fixtureItem({ id: 'm-del1', title: '已删除的旧记忆', order: 2, deletedAt: OLD_TIME, updatedAt: OLD_TIME }),
     ],
   }),
   'utf8',
@@ -135,7 +136,29 @@ const guessed = (applied2.items || []).find((item) => item.title === '部署纪�
 expect('老导出文件按内容重判为完全锚点', guessed && guessed.anchorMode, (v) => v === 'full', JSON.stringify(guessed))
 expect('老导出文件的来源是 inferred', guessed && guessed.anchorSource, (v) => v === 'inferred', '')
 
-for (const dir of [dirA, dirB, dirC]) await fs.rm(dir, { recursive: true, force: true })
+// D：待确认候选导入后仍是待确认，不能借导入绕过「用户点头」
+const dirD = await fs.mkdtemp(path.join(os.tmpdir(), 'dmc-exp-d-'))
+const d = await boot(dirD, 'd')
+const appliedPending = await d.call({
+  op: 'import.apply',
+  payload: JSON.stringify({
+    items: [
+      { title: '候选甲', body: '模型写的，用户还没审。', status: 'pending' },
+      { title: '正式乙', body: '用户已经确认过。', status: 'active' },
+    ],
+  }),
+})
+const pendingItem = (appliedPending.items || []).find((item) => item.title === '候选甲')
+const activeItem = (appliedPending.items || []).find((item) => item.title === '正式乙')
+expect('导入的待确认候选仍是 pending', pendingItem && pendingItem.status, (v) => v === 'pending', JSON.stringify(pendingItem))
+expect('导入的正式记忆仍是 active', activeItem && activeItem.status, (v) => v === 'active', JSON.stringify(activeItem))
+
+// E：Markdown 导出的「未归类」不能把已删除/归档的条目带出去
+const md = await a.call({ op: 'export' })
+expect('Markdown 导出不含已删除条目', md.markdown.includes('已删除的旧记忆'), (v) => v === false, '回收站里的条目漏进导出了')
+expect('Markdown 导出仍含正常条目', md.markdown.includes('部署纪律'), (v) => v === true, '')
+
+for (const dir of [dirA, dirB, dirC, dirD]) await fs.rm(dir, { recursive: true, force: true })
 if (prevDir === undefined) delete process.env.DSH_MEMORY_DIR
 else process.env.DSH_MEMORY_DIR = prevDir
 if (prevCfg !== undefined) process.env.DSH_MEMORY_CONFIG = prevCfg
