@@ -123,6 +123,30 @@ let RECYCLE_KEEP_DAYS = ENV_RECYCLE_DAYS ?? DEFAULT_RECYCLE_DAYS
 const TOMBSTONE_KEEP_DAYS = 90
 
 /**
+ * 单条记忆的规模护栏。模型写入路径早有 8000/200（防模型啰嗦），面板是另一个正文入口，
+ * 不设上限时一次粘贴 100 万字会让之后每次 persist 都重写整份 store.json、每次同步整份上传。
+ * 人工输入放宽到 2 万字（约 10 页文档），超出就提示拆条；标题与模型路径保持一致。
+ */
+const MAX_ITEM_BODY = 20000
+const MAX_ITEM_TITLE = 200
+
+function checkItemTitle(title) {
+  if (title.length > MAX_ITEM_TITLE) {
+    throw fail(
+      `标题 ${title.length} 字，超过 ${MAX_ITEM_TITLE} 字上限。标题写成一句话结论就够，具体内容放正文。`,
+    )
+  }
+}
+
+function checkItemBody(body) {
+  if (body.length > MAX_ITEM_BODY) {
+    throw fail(
+      `正文 ${body.length} 字，超过单条上限 ${MAX_ITEM_BODY} 字。一条记忆只讲一件事，长文建议拆成几条；需要存档的话放「归档」或另存文件。`,
+    )
+  }
+}
+
+/**
  * 检索用的同义组：内置一组中文常见说法，用户可在面板里追加自己的说法（v0.9.5 起，
  * 之前只能手改 config.json 的 synonyms 并重启）。检索时按 0.5 权重扩展召回。
  */
@@ -745,10 +769,12 @@ async function ensureLoaded() {
       store = normalizeState(await readStoreFile(STORE_FILE))
       sessions = normalizeSessions(await readJson(SESSIONS_FILE, {}))
       pruneSessions(sessions)
-      // 回收站到期清理：软删除太久的条目在这里彻底删掉，顺便写墓碑防止同步复活。
-      if (purgeExpiredDeleted(store).length) {
+      // 回收站到期清理 + 墓碑到期清理：都在加载时顺手做，避免文件只增不减。
+      const purgedRecycle = purgeExpiredDeleted(store).length
+      const purgedTombs = pruneTombstones(store)
+      if (purgedRecycle || purgedTombs) {
         await persist()
-        await persistSessions()
+        if (purgedRecycle) await persistSessions()
       }
       // 只在「这台机器从没播过种、且库是空的」时播一次。老安装的库已经有数据，
       // 直接记下 seeded，免得用户删光以后重启又被塞回 3 条样例。
@@ -1519,6 +1545,21 @@ function markDeleted(state, ids) {
   }
 }
 
+/**
+ * 清掉过老的墓碑：它们只是「这条被删过」的同步凭据，超过保留期后另一台设备
+ * 也不会再拿旧副本回来。返回清掉的条数，调用方负责 persist。
+ */
+function pruneTombstones(state, keepDays = TOMBSTONE_KEEP_DAYS) {
+  const before = (state.deleted ?? []).length
+  if (!before) return 0
+  const cutoff = Date.now() - keepDays * 86400000
+  state.deleted = (state.deleted ?? []).filter((entry) => {
+    const at = Date.parse(String(entry?.at ?? ''))
+    return Number.isNaN(at) || at >= cutoff
+  })
+  return before - state.deleted.length
+}
+
 function uniqueGroupName(state, name, exceptId) {
   const trimmed = String(name ?? '').trim()
   if (!trimmed) throw fail('文件夹名不能为空')
@@ -1866,27 +1907,20 @@ async function runOp(op, payload) {
       // all:true 是明确要求清空全部记录（面板里那个「清空删除记录」按钮），会一次清掉。
       const all = payload.all === true
       const days = Number.isFinite(Number(payload.days)) && Number(payload.days) > 0 ? Number(payload.days) : TOMBSTONE_KEEP_DAYS
-      const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
       const before = (state.deleted ?? []).length
-      const kept = all
-        ? []
-        : (state.deleted ?? []).filter((entry) => {
-            const at = Date.parse(String(entry?.at ?? ''))
-            return Number.isNaN(at) || at >= cutoff
-          })
-      const removed = before - kept.length
+      const removed = all ? before : pruneTombstones(state, days)
+      if (all) state.deleted = []
       if (!removed) {
         return snapshot(state, sessionId, {
           message: all ? '删除记录本来就是空的' : `没有超过 ${days} 天的删除记录需要清理`,
         })
       }
-      state.deleted = kept
       state.updatedAt = nowIso()
       await persist()
       return snapshot(state, sessionId, {
         message: all
           ? `已清空 ${removed} 条删除记录`
-          : `已清理 ${removed} 条 ${days} 天前的删除记录（还剩 ${kept.length} 条）`,
+          : `已清理 ${removed} 条 ${days} 天前的删除记录（还剩 ${(state.deleted ?? []).length} 条）`,
       })
     }
 
@@ -2086,6 +2120,8 @@ async function runOp(op, payload) {
       const title = String(payload.title ?? '').trim()
       const body = String(payload.body ?? '')
       if (!title && !body.trim()) throw fail('标题和正文不能都为空')
+      checkItemTitle(title)
+      checkItemBody(body)
       const tags = normalizeTags(payload.tags)
       const anchor = resolveAnchor(payload, title, body, tags)
       const item = {
@@ -2117,13 +2153,21 @@ async function runOp(op, payload) {
     case 'item.update': {
       const item = requireItem(state, payload.id)
       const patch = payload.patch && typeof payload.patch === 'object' ? payload.patch : {}
+      // 空 patch 直接返回：否则什么都没改也会顶 updatedAt、触发持久化与自动推送，
+      // 下次合并时这条会被判成「更新」，让另一台设备的真实修改输掉。
+      if (!Object.keys(patch).length) return snapshot(state, sessionId)
       const touchedContent = 'title' in patch || 'body' in patch || 'tags' in patch
       if ('title' in patch) {
         const title = String(patch.title ?? '').trim()
         if (!title) throw fail('标题不能为空')
+        checkItemTitle(title)
         item.title = title
       }
-      if ('body' in patch) item.body = String(patch.body ?? '')
+      if ('body' in patch) {
+        const body = String(patch.body ?? '')
+        checkItemBody(body)
+        item.body = body
+      }
       if ('tags' in patch) item.tags = normalizeTags(patch.tags)
       if ('groupId' in patch) item.groupId = resolveGroupId(state, patch.groupId)
       if ('enabled' in patch) item.enabled = patch.enabled !== false
@@ -2281,7 +2325,11 @@ async function runOp(op, payload) {
         .map((id) => state.items.find((entry) => entry.id === id))
         .filter((item) => item && !item.deletedAt && !item.archivedAt)
       if (sources.length < 2) throw fail('至少选择 2 条记忆才能合并')
-      const title = String(payload.title ?? '').trim() || `${sources[0].title}（合并 ${sources.length} 条）`
+      // 合并标题按上限裁一下：源标题本就在上限内，加「（合并 N 条）」后缀后可能超。
+      const title = clipText(
+        String(payload.title ?? '').trim() || `${sources[0].title}（合并 ${sources.length} 条）`,
+        MAX_ITEM_TITLE,
+      )
       const body =
         String(payload.body ?? '').trim() ||
         sources
@@ -2292,6 +2340,8 @@ async function runOp(op, payload) {
             return `### ${item.title}${stamp ? `（${stamp}）` : ''}\n${String(item.body ?? '').trim()}`
           })
           .join('\n\n')
+      // 合并是系统生成、用户没有粘贴动作，但拼 10 条 8000 字就是 8 万字；同样按单条上限拦。
+      checkItemBody(body)
       const tags = [...new Set(sources.flatMap((item) => item.tags ?? []))]
       const groupId = sources.find((item) => item.groupId)?.groupId ?? null
       const anchorMode = sources.some((item) => item.anchorMode === 'full')
