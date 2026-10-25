@@ -2542,6 +2542,17 @@ window.__ModuleLoader__.load({
                         ? ' · 已超过压缩线，下一条起压缩'
                         : '',
                   ),
+                  data.lastInject
+                    ? h(
+                        'div',
+                        { className: 'dmc-budget-text' },
+                        data.lastInject.kind === 'delta'
+                          ? `增量 · 上一轮 ${data.lastInject.chars} 字${
+                              data.lastInject.saving > 0 ? `（省 ${Math.round(data.lastInject.saving * 100)}%）` : ''
+                            }`
+                          : `全量 · 上一轮 ${formatK(data.lastInject.chars)} 字`,
+                      )
+                    : null,
                 )
               : null,
             (() => {

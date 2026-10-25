@@ -90,6 +90,7 @@ if (!skipTests) {
     'dev/backups.test.mjs',
     'dev/session-default.test.mjs',
   'dev/synonyms.test.mjs',
+  'dev/recall.test.mjs',
   ]
   for (const test of tests) {
     if (existsSync(path.join(ROOT, test))) run(process.execPath, [test])

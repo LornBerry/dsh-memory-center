@@ -68,6 +68,23 @@ const ENV_COMPRESS_RATIO = parseRatio(process.env.DSH_MEMORY_COMPRESS_RATIO)
 let COMPRESS_RATIO = ENV_COMPRESS_RATIO ?? DEFAULT_COMPRESS_RATIO
 let SOFT_INJECT_CHARS = Math.max(1000, Math.floor(MAX_INJECT_CHARS * COMPRESS_RATIO))
 
+/**
+ * 增量注入（v0.10.13）：记忆没变的那一轮只发「变化了什么」，不再把全文重发一遍。
+ * 注入消息头部带版本标记，下一轮据此判断「上次看到的是哪一版」；任何一环对不上
+ * （宿主压缩把注入消息裁掉、宿主重启、超出回溯窗口）就退回全量——宁可多花字符，也不给错状态。
+ * - RECALL_REV_LIMIT：从快照到当前最多能连多少版增量，超了就重新对齐。
+ * - DELTA_CAP_RATIO：增量超过「上次全量 × 该比例」就退回全量，避免碎片堆成山。
+ * - DELTA_BODY_CHARS：普通条目在增量里给多少字正文（短正文整条给完，不截）。
+ * - ANCHOR_FULL_MAX：锚点条目在增量里的正文字数上限（锚点默认给全文，但不能无上限）。
+ */
+const RECALL_MARK_RE = /〔记忆(快照|更新) #(\d+)〕/g
+const RECALL_REV_LIMIT = 512
+const DELTA_CAP_RATIO = 0.4
+const DELTA_BODY_CHARS = Math.max(80, Number(process.env.DSH_MEMORY_DELTA_BODY ?? '') || 400)
+const ANCHOR_FULL_MAX = Math.max(500, Number(process.env.DSH_MEMORY_ANCHOR_MAX ?? '') || 4000)
+/** 干跑：只把决策写进 <数据目录>/recall-dry-run.jsonl，不真的改注入内容。 */
+const RECALL_DRY = process.env.DSH_MEMORY_RECALL_DRY === '1'
+
 function applyCompressRatio(ratio) {
   COMPRESS_RATIO = ratio
   SOFT_INJECT_CHARS = Math.max(1000, Math.floor(MAX_INJECT_CHARS * ratio))
@@ -1138,6 +1155,159 @@ function summaryLine(stats) {
  * 装不下的条目不截半，直接退化成「索引」：只列标题，让模型需要时用 memory_search 取全文。
  * 这样既不会把一条记忆切成两半，也不会让模型误以为记忆只有这么点。
  */
+// ---------------------------------------------------------------- 增量注入
+
+/** 每会话一条：上一轮注入的版本、选中集合的指纹、上次发的是全量还是增量。 */
+const recallState = new Map()
+
+function recallMarker(rev, kind) {
+  return kind === 'delta' ? `〔记忆更新 #${rev}〕` : `〔记忆快照 #${rev}〕`
+}
+
+/** 「这条记忆有没有变」的指纹：只放会影响注入内容的字段。 */
+function itemSig(item) {
+  return [
+    item.updatedAt ?? '',
+    item.status ?? '',
+    item.enabled ? 1 : 0,
+    item.archivedAt ?? '',
+    item.deletedAt ?? '',
+    item.anchorMode ?? '',
+    item.pinned ? 1 : 0,
+    item.groupId ?? '',
+    String(item.title ?? ''),
+    String(item.body ?? '').length,
+    Array.isArray(item.tags) ? item.tags.join('/') : '',
+  ].join('|')
+}
+
+/** 扫本轮要发给模型的 messages，收集出现过的快照/更新标记（宿主压缩后可能只剩其中一部分）。 */
+function readRecallMarks(messages) {
+  const snapshots = new Set()
+  const revs = new Set()
+  let maxRev = 0
+  for (const message of Array.isArray(messages) ? messages : []) {
+    const parts = Array.isArray(message?.content) ? message.content : []
+    let text = ''
+    for (const part of parts) if (part && part.type === 'text' && typeof part.text === 'string') text += part.text
+    if (!text) continue
+    RECALL_MARK_RE.lastIndex = 0
+    for (const hit of text.matchAll(RECALL_MARK_RE)) {
+      const rev = Number(hit[2])
+      if (!Number.isFinite(rev) || rev <= 0) continue
+      if (hit[1] === '快照') snapshots.add(rev)
+      else revs.add(rev)
+      if (rev > maxRev) maxRev = rev
+    }
+  }
+  return { snapshots, revs, maxRev }
+}
+
+/**
+ * 还能不能接着发增量：快照标记还在、消息里最新标记就是上次那一版、区间内每一版都有更新标记、没超窗口。
+ * 不满足只说明「不能发增量」，不是错误——调用方退回全量即可。
+ */
+function chainIntact(marks, prev) {
+  if (!prev) return false
+  if (!marks.snapshots.has(prev.snapshotRev)) return false
+  if (marks.maxRev !== prev.rev) return false
+  if (prev.rev - prev.snapshotRev > RECALL_REV_LIMIT) return false
+  for (let rev = prev.snapshotRev + 1; rev <= prev.rev; rev += 1) {
+    if (!marks.revs.has(rev)) return false
+  }
+  return true
+}
+
+/** 按上限取正文；短正文整条给完，不切、不加「还有多少字」的提示。 */
+function recallBodyText(item, limit) {
+  const body = String(item.body ?? '').trim()
+  const runes = Array.from(body)
+  if (runes.length <= limit) return { text: body, clipped: false, total: runes.length }
+  return { text: `${runes.slice(0, limit).join('')}…`, clipped: true, total: runes.length }
+}
+
+/**
+ * 生成一条增量注入文本；没有变化返回 null，调用方据此不发任何消息。
+ * 锚点（完全 / 权重 / 置顶）给全文（最多 ANCHOR_FULL_MAX），普通条目给 DELTA_BODY_CHARS 字。
+ * 不做「这条以前给过全文就不再给」的优化：改了标题也会重发正文，正确性优先，代价可控。
+ */
+function composeDelta(selected, prev, rev) {
+  const next = new Map()
+  const added = []
+  const changed = []
+  for (const item of selected) {
+    const sig = itemSig(item)
+    next.set(item.id, { sig, title: String(item.title ?? '') })
+    const old = prev.sig.get(item.id)
+    if (!old) added.push(item)
+    else if (old.sig !== sig) changed.push(item)
+  }
+  const removed = []
+  for (const [id, old] of prev.sig) {
+    if (next.has(id)) continue
+    removed.push(old.title || id)
+  }
+  if (!added.length && !changed.length && !removed.length) return null
+
+  const lines = [recallMarker(rev, 'delta'), '']
+  const anchorInvolved = [...added, ...changed].some(
+    (item) => item.anchorMode === 'full' || item.anchorMode === 'weight' || item.pinned,
+  )
+  const pushEntry = (item) => {
+    const tags = Array.isArray(item.tags) && item.tags.length ? `  〔${item.tags.join(' / ')}〕` : ''
+    lines.push(`- ${String(item.title ?? '').trim()}${tags}`)
+    const isAnchor = item.anchorMode === 'full' || item.anchorMode === 'weight' || item.pinned
+    const limit = isAnchor ? ANCHOR_FULL_MAX : DELTA_BODY_CHARS
+    const body = recallBodyText(item, limit)
+    if (body.text) for (const line of body.text.split('\n')) lines.push(`  ${line}`)
+    if (body.clipped) {
+      lines.push(
+        isAnchor
+          ? `  （这条锚点正文共 ${body.total} 字，上面只载入了前 ${limit} 字。没读到全文之前不要照它执行，先 memory_search 取完整内容。）`
+          : `  （正文还有 ${body.total - limit} 字没展开，需要时用 memory_search 取全文。）`,
+      )
+    }
+  }
+  if (added.length) {
+    lines.push('**新增**')
+    for (const item of added) pushEntry(item)
+  }
+  if (changed.length) {
+    lines.push('**修改**')
+    for (const item of changed) pushEntry(item)
+  }
+  if (removed.length) {
+    lines.push('**移除**（这些记忆已删除、归档或移出本会话的选择范围，不要再引用）')
+    for (const title of removed) lines.push(`- ${title}`)
+  }
+  const text = lines.join('\n')
+  return { text, sig: next, chars: text.length, anchorInvolved }
+}
+
+/** 面板「本轮注入」那一行用的快照数据。 */
+function lastInjectView(sessionId) {
+  const prev = recallState.get(sessionId)
+  if (!prev || !prev.lastKind) return null
+  const chars = prev.lastChars ?? 0
+  const saving =
+    prev.lastKind === 'delta' && prev.snapshotChars > 0
+      ? Math.max(0, Math.round((1 - chars / prev.snapshotChars) * 1000) / 1000)
+      : 0
+  return { kind: prev.lastKind, chars, at: prev.lastAt ?? null, rev: prev.rev, saving }
+}
+
+/** 干跑日志：一行一个决策，供 dev/bench-replay.mjs 与实际运行对照。 */
+function recallTrace(entry) {
+  if (!RECALL_DRY) return
+  try {
+    void fs
+      .appendFile(path.join(DATA_DIR, 'recall-dry-run.jsonl'), `${JSON.stringify({ at: new Date().toISOString(), ...entry })}\n`, 'utf8')
+      .catch(() => {})
+  } catch {
+    // 日志写不进去不影响注入
+  }
+}
+
 function composeInjection(state, sessionId) {
   const { selection } = effectiveSelection(sessionId)
   const empty = {
@@ -1497,6 +1667,7 @@ function snapshot(state, sessionId, extra) {
     topics: topicView(state),
     preview: injection.text,
     injection: injection.stats,
+    lastInject: lastInjectView(sessionId),
     updatedAt: state.updatedAt,
   }
 }
@@ -2990,16 +3161,93 @@ export function apply(ctx) {
         if (title) sessionTitles.set(sessionId, title)
       }
       const state = await ensureLoaded()
-      const text = buildInjection(state, sessionId)
-      if (!text) return decision
-      // 只比文本不够：上下文压缩会把上一次的 recall 消息裁掉，这时即使文本没变
-      // 也必须重新注入，否则这一轮之后模型就再也看不到记忆了。
+      const selection = effectiveSelection(sessionId).selection
+      const selected = selection && selection.mode !== 'none' ? selectedItemIds(state, selection) : []
+      if (INJECTION_PAUSED || !selected.length) return decision
+
+      const prev = recallState.get(sessionId) ?? null
+      const marks = readRecallMarks(decision.messages)
       const recallInContext =
         Array.isArray(decision.messages) &&
         decision.messages.some((message) => message?.source?.kind === `plugin:${PLUGIN_ID}`)
-      if (recallInContext && lastInjected.get(sessionId) === text) return decision
-      lastInjected.set(sessionId, text)
-      log('info', `注入记忆 ${text.length} 字符`, { session: sessionId })
+      // 干跑时按「模拟上一轮已经发过」来判定，否则每轮都只能看到 fallback，观察不到增量路径。
+      const canChain = RECALL_DRY ? Boolean(prev) : chainIntact(marks, prev)
+
+      if (canChain) {
+        const delta = composeDelta(selected, prev, prev.rev + 1)
+        if (delta) {
+          const cap = Math.max(600, Math.floor((prev.snapshotChars || 0) * DELTA_CAP_RATIO))
+          // 锚点全文不受 40% 限制：锚点就是要给全，压缩它等于给错
+          const limit = delta.anchorInvolved ? Math.max(cap, MAX_INJECT_CHARS) : cap
+          if (delta.chars <= limit) {
+            recallState.set(sessionId, {
+              ...prev,
+              rev: prev.rev + 1,
+              sig: delta.sig,
+              lastKind: 'delta',
+              lastChars: delta.chars,
+              lastAt: Date.now(),
+            })
+            recallTrace({
+              session: sessionId,
+              decision: 'delta',
+              rev: prev.rev + 1,
+              chars: delta.chars,
+              cap: limit,
+              anchor: delta.anchorInvolved,
+            })
+            if (RECALL_DRY) return decision
+            lastInjected.set(sessionId, delta.text)
+            log('info', `注入增量 ${delta.chars} 字符`, { session: sessionId })
+            return {
+              kind: 'enter',
+              messages: [
+                ...decision.messages,
+                {
+                  id: randomUUID(),
+                  role: 'user',
+                  content: [{ type: 'text', text: delta.text }],
+                  source: { kind: `plugin:${PLUGIN_ID}`, form: 'recall' },
+                },
+              ],
+            }
+          }
+          recallTrace({
+            session: sessionId,
+            decision: 'fallback-full',
+            reason: 'delta-too-big',
+            chars: delta.chars,
+            cap: limit,
+          })
+        } else if (RECALL_DRY || recallInContext) {
+          recallTrace({ session: sessionId, decision: 'unchanged', rev: prev.rev })
+          return decision
+        } else {
+          recallTrace({ session: sessionId, decision: 'fallback-full', reason: 'recall-gone' })
+        }
+      } else {
+        recallTrace({ session: sessionId, decision: 'fallback-full', reason: prev ? 'chain-broken' : 'first' })
+      }
+
+      // 全量：新的快照版本号 = 上次版本 + 1（首轮从 #1 开始），这样增量链能对齐。
+      const fullRev = (prev?.rev ?? 0) + 1
+      const fullBody = buildInjection(state, sessionId)
+      if (!fullBody) return decision
+      const fullText = `${recallMarker(fullRev, 'full')}\n${fullBody}`
+      if (recallInContext && lastInjected.get(sessionId) === fullText) return decision
+      recallState.set(sessionId, {
+        rev: fullRev,
+        snapshotRev: fullRev,
+        snapshotChars: fullText.length,
+        sig: new Map(selected.map((item) => [item.id, { sig: itemSig(item), title: String(item.title ?? '') }])),
+        lastKind: 'full',
+        lastChars: fullText.length,
+        lastAt: Date.now(),
+      })
+      recallTrace({ session: sessionId, decision: 'full', rev: fullRev, chars: fullText.length })
+      if (RECALL_DRY) return decision
+      lastInjected.set(sessionId, fullText)
+      log('info', `注入记忆 ${fullText.length} 字符`, { session: sessionId })
       return {
         kind: 'enter',
         messages: [
@@ -3007,7 +3255,7 @@ export function apply(ctx) {
           {
             id: randomUUID(),
             role: 'user',
-            content: [{ type: 'text', text }],
+            content: [{ type: 'text', text: fullText }],
             source: { kind: `plugin:${PLUGIN_ID}`, form: 'recall' },
           },
         ],
@@ -3021,6 +3269,7 @@ export function apply(ctx) {
     if (sessionId) {
       lastInjected.delete(sessionId)
       sessionTitles.delete(sessionId)
+      recallState.delete(sessionId)
     }
     // 计时器都 unref 过：宿主退出时它直接被丢掉，本地改动得等下次启动才推。
     // 会话结束时若还有排队的推送，就地补一次（失败不打扰，下次启动还会再来）。

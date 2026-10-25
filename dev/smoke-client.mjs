@@ -228,6 +228,7 @@ const snapshot = {
     topics: 1,
     stale: 1,
   },
+  lastInject: { kind: 'delta', chars: 153, at: '2026-10-22T00:00:00.000Z', rev: 2, saving: 0.98 },
   updatedAt: '2026-10-22T00:00:00.000Z',
 }
 
@@ -452,6 +453,9 @@ for (const { options, component } of registrations) {
         else if (posPinned > posOld || posPinned > posNew) fail.push(`排序变体${tag}：置顶条目应始终在最前`)
         else if (tag === ' sort-updated' && !(posNew < posOld)) fail.push('选「按修改时间顺序」后，时间更新的条目应排在前面')
         else if (tag === ' sort-updated-asc' && !(posOld < posNew)) fail.push('内部值 updated-asc 时，时间更旧的条目应排在前面')
+      }
+      if (options.name === 'main' && !html.includes('增量 · 上一轮 153 字（省 98%）')) {
+        fail.push('面板底部应显示「增量 · 上一轮 153 字（省 98%）」')
       }
       if (options.name === 'main' && html.includes('href="javascript:')) {
         fail.push('markdown 链接协议白名单失效：javascript: 被渲染成了 href')
