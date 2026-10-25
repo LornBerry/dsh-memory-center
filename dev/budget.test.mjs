@@ -133,6 +133,47 @@ expect('非法阈值被拒', invalid.ok, (v) => v === false, '超出 0.1–1 应
 const restored = await call({ op: 'budget.set', ratio: 0.8 })
 expect('改回 0.8', restored.injection.softLimit, (v) => v === 2000, '恢复默认压缩线')
 
+// 长标题不得把索引清单撑破：原先只限 40 条、不限标题长度，最后靠 slice 硬截断，
+// 截断点会落在清单中间（半行）。现在按剩余预算逐条装，标题先按码点 clip 到 60。
+for (const entry of created) {
+  const title = `${entry.title}｜` + '这一段很长很长的标题用来把索引清单挤爆'.repeat(8)
+  await call({ op: 'item.update', id: entry.id, patch: { title } })
+}
+const longState = await call({ op: 'state', sessionId })
+expect('长标题也不超上限', longState.preview.length <= 2500, (v) => v === true, `实际 ${longState.preview.length}`)
+const indexSection = longState.preview.slice(longState.preview.indexOf('### 未展开的记忆'))
+const indexLines = indexSection.split('\n').filter((line) => line.startsWith('- '))
+expect('索引清单不为空', indexLines.length > 0, (v) => v === true, '丢弃的条目应列成标题')
+expect(
+  '索引行标题被 clip（≤ 60 码点 + 省略号）',
+  indexLines.every((line) => Array.from(line).length <= 72),
+  (v) => v === true,
+  `最长一行 ${Math.max(...indexLines.map((line) => Array.from(line).length))} 码点`,
+)
+const tail = indexLines[indexLines.length - 1] || ''
+expect(
+  '索引末行不是被硬截断的半行',
+  tail.endsWith('…') || tail.includes('……共'),
+  (v) => v === true,
+  `末行：${tail.slice(0, 40)}`,
+)
+
+// search 只回 id + snippet：50 条正文白占带宽，前端解析完就丢
+const found = await call({ op: 'search', query: '预算条目' })
+expect('search 命中', found.hits.length > 0, (v) => v === true, '改过标题后应仍能搜到')
+expect('search 不回传正文', found.hits.every((hit) => hit.body === undefined), (v) => v === true, '面板只用 id + snippet')
+expect('search 仍给 snippet', found.hits.every((hit) => typeof hit.snippet === 'string'), (v) => v === true, '缺 snippet 面板没得高亮')
+
+// 同步失败也必须留下状态：原来只有 quiet=false 才写，自动同步失败在界面上永远「从未同步」
+await call({ op: 'sync.set', patch: { mode: 'webdav', remote: 'http://127.0.0.1:1/dav', autoPull: false } })
+const failedSync = await call({ op: 'sync.now' })
+expect('同步失败返回错误', failedSync.ok, (v) => v === false, '连不上远端应报错')
+const afterFail = await call({ op: 'state', sessionId })
+expect('失败后 lastSyncStatus=error', afterFail.sync.lastSyncStatus, (v) => v === 'error', String(afterFail.sync.lastSyncStatus))
+expect('失败原因被记下', Boolean(afterFail.sync.lastSyncError), (v) => v === true, 'lastSyncError 应非空')
+expect('失败不推进 lastSyncAt', Boolean(afterFail.sync.lastSyncAt), (v) => v === false, String(afterFail.sync.lastSyncAt))
+await call({ op: 'sync.set', patch: { mode: 'off' } })
+
 // 预算放大后应全部展开（重新导入一份模块，环境变量在模块加载时读取）
 process.env.DSH_MEMORY_MAX_CHARS = '100000'
 let handler2 = null

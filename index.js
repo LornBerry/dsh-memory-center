@@ -871,10 +871,17 @@ async function runSyncNow({ quiet = false } = {}) {
       files: SYNC_FILES,
       merge: mergeRemote,
     })
-    if (!quiet) {
+    // 状态一律落盘，不再区分手动/自动（quiet）：自动同步失败原来被静默吞掉，
+    // 面板会一直显示「上次同步正常」，直到用户发现两台设备内容对不上。
+    // 但 lastSyncAt 只在成功时前进——它是增量合并的 since，失败还前进会漏合并。
+    if (result.status === 'ok') {
       sync.lastSyncAt = result.syncedAt || nowIso()
-      sync.lastSyncStatus = result.status
-      sync.lastSyncError = result.status === 'error' ? result.message : ''
+      sync.lastSyncStatus = 'ok'
+      sync.lastSyncError = ''
+      await saveConfig(DATA_DIR, { sync }).catch(() => {})
+    } else if (result.status === 'error') {
+      sync.lastSyncStatus = 'error'
+      sync.lastSyncError = result.message || '同步失败'
       await saveConfig(DATA_DIR, { sync }).catch(() => {})
     }
     return result
@@ -954,6 +961,19 @@ function renderItemLines(item, topic) {
 /** 一条记忆注入时的字符成本（渲染后的真实长度，含换行）。容量画像与预算共用这一处口径。 */
 function costOf(item, topic) {
   return renderItemLines(item, topic).join('\n').length + 1
+}
+
+/**
+ * 索引清单里的标题按码点裁到 60 字。
+ *
+ * 索引清单原来只限条数（最多 40 条），不限长度：40 条长标题能把清单本身撑出硬上限，
+ * 最后只能靠「按码点硬截断」兜底，截断点会落在清单中间，读起来像乱码。
+ * 这里先按码点裁标题，保证每条索引给定预算内的长度可控。
+ */
+const INDEX_TITLE_CHARS = 60
+function clipTitle(title) {
+  const runes = Array.from(String(title ?? ''))
+  return runes.length > INDEX_TITLE_CHARS ? `${runes.slice(0, INDEX_TITLE_CHARS).join('')}…` : runes.join('')
 }
 
 /** 同主题分组的缓存：快照一次请求里 capacityOf 与 composeInjection 会各要一次，别重复算。 */
@@ -1060,10 +1080,13 @@ function composeInjection(state, sessionId) {
   const RESERVE = 320
   // 压缩阈值就是这里的预算：超过 softLimit（默认 80%）就只给标题，不等撑满 100%。
   let budget = SOFT_INJECT_CHARS - head.join('\n').length - RESERVE
-  const totalChars = priority.reduce((sum, item) => sum + costOf(item, topicOfItem(item)), 0)
+  // 每条只渲染一次：totalChars 与装填循环原来各调一遍 costOf，等于全文渲染两遍
+  const costMap = new Map()
+  for (const item of selected) costMap.set(item.id, costOf(item, topicOfItem(item)))
+  const totalChars = selected.reduce((sum, item) => sum + (costMap.get(item.id) ?? 0), 0)
   const kept = new Set()
   for (const item of priority) {
-    const cost = costOf(item, topicOfItem(item))
+    const cost = costMap.get(item.id) ?? 0
     if (cost > budget) continue
     kept.add(item.id)
     budget -= cost
@@ -1103,7 +1126,18 @@ function composeInjection(state, sessionId) {
 
   if (dropped.length) {
     blocks.push('### 未展开的记忆（只有标题）')
-    const titles = dropped.slice(0, 40).map((item) => `- ${item.title}${item.tags.length ? `  〔${item.tags.join(' / ')}〕` : ''}`)
+    // 索引清单也吃硬上限：原来只限 40 条、不限长度，40 条长标题能把清单撑出上限，
+    // 最后只能靠硬截断兜底（截在清单中间）。这里按剩余预算实时裁剪标题，
+    // 放不下的只报总数，正文与清单都不会被从中间截断。
+    const tailReserve = 90 // 结尾那句「需要上述任何一条…」+「……共 N 条」的余量
+    let indexBudget = MAX_INJECT_CHARS - blocks.join('\n').length - tailReserve
+    const titles = []
+    for (const item of dropped) {
+      const line = `- ${clipTitle(item.title)}${item.tags.length ? `  〔${item.tags.join(' / ')}〕` : ''}`
+      if (indexBudget - line.length - 1 < 0) break
+      titles.push(line)
+      indexBudget -= line.length + 1
+    }
     blocks.push(...titles)
     if (dropped.length > titles.length) blocks.push(`- ……共 ${dropped.length} 条`)
     blocks.push('')
@@ -1204,7 +1238,16 @@ function capacityOf(state) {
   // 与 composeInjection 共用 costOf：面板显示的占比必须就是注入时真正计入的字符数
   // （包括「旧版」提示那一行，否则面板会少算几十个字符）
   const topics = topicsOf(state)
-  const charsOf = (item) => costOf(item, topics.byId.get(item.id))
+  // 同一条记忆在这里会被问到最多四次（总量、按文件夹、longest 排序、longest 取长度），
+  // 每次都会把正文整段渲染一遍，所以按 id 缓存住成本。
+  const costMap = new Map()
+  const charsOf = (item) => {
+    const cached = costMap.get(item.id)
+    if (cached !== undefined) return cached
+    const cost = costOf(item, topics.byId.get(item.id))
+    costMap.set(item.id, cost)
+    return cost
+  }
   const live = state.items.filter(
     (item) => !item.deletedAt && !item.archivedAt && item.status === 'active' && item.enabled,
   )
@@ -1265,7 +1308,9 @@ function recycleView(state) {
 function slimItem(item) {
   const body = String(item.body ?? '')
   const { body: _omitted, ...rest } = item
-  return { ...rest, excerpt: body.slice(0, 120), bodyChars: body.length }
+  // 按码点截，不用 slice：slice 按 UTF-16 码元切，正文开头是 emoji 时会劈成半个字符，
+  // 面板拼接后显示成乱码方块。Array.from 按码点迭代，切完仍是完整字符。
+  return { ...rest, excerpt: Array.from(body).slice(0, 120).join(''), bodyChars: body.length }
 }
 
 function snapshot(state, sessionId, extra) {
@@ -1287,7 +1332,12 @@ function snapshot(state, sessionId, extra) {
       locked: ENV_RECYCLE_DAYS !== null,
       defaultDays: DEFAULT_RECYCLE_DAYS,
       count: recycledItems(state).length,
-      chars: recycledItems(state).reduce((sum, item) => sum + costOf(item), 0),
+      // 回收站只统计原始字符数：这里要的是「占了多少空间」，不值得为一句数字
+      // 把每条正文都渲染成注入格式（costOf 会跑完整渲染流程）。
+      chars: recycledItems(state).reduce(
+        (sum, item) => sum + item.title.length + String(item.body ?? '').length,
+        0,
+      ),
       tombstones: (state.deleted ?? []).length,
       tombstoneDays: TOMBSTONE_KEEP_DAYS,
     },
@@ -2450,7 +2500,9 @@ async function runOp(op, payload) {
             title: item.title,
             group: groupNameOf(state, item.groupId),
             tags: item.tags,
-            body: item.body,
+            // 不回传 body：面板只用 id + snippet（见 client.js 的 search 回调），
+            // 50 条正文白占几十 KB 带宽，还要前端解析一遍再丢掉。
+            // 要看全文走 item.get（编辑/详情），要喂模型走 memory_search（自带预算）。
             snippet,
             score: Math.round(score * 1000) / 1000,
             anchor: item.anchorMode || 'off',

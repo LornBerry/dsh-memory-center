@@ -54,6 +54,20 @@ await fs.writeFile(
         updatedAt: now,
       },
       {
+        id: 'm-emoji',
+        title: 'emoji 条目',
+        body: `${'🧠'.repeat(130)}尾巴`,
+        tags: [],
+        groupId: null,
+        enabled: true,
+        pinned: false,
+        status: 'active',
+        source: 'manual',
+        order: 2,
+        createdAt: now,
+        updatedAt: now,
+      },
+      {
         id: 'm-archived',
         title: '归档条目',
         body: '归档的正文也应该只给摘要，否则归档区越长越占地方',
@@ -142,7 +156,7 @@ async function call(payload) {
 }
 
 const snapshot = await call({ op: 'state' })
-expect('快照里有两条', snapshot.items.length, (v) => v === 2, JSON.stringify(snapshot.items?.length))
+expect('快照里有三条', snapshot.items.length, (v) => v === 3, JSON.stringify(snapshot.items?.length))
 expect(
   '快照条目都不带 body',
   snapshot.items.every((item) => item.body === undefined),
@@ -177,6 +191,22 @@ expect('item.get 能拿到完整正文', full.item && full.item.body, (v) => v =
 
 const short = snapshot.items.find((item) => item.id === 'm-short')
 expect('短条目 excerpt 就是原文', short.excerpt, (v) => v === '很短', String(short.excerpt))
+
+// 按 UTF-16 码元切会把 emoji 劈成半个代理项，快照里就是乱码方块
+const emoji = snapshot.items.find((item) => item.id === 'm-emoji')
+const loneSurrogate = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
+expect(
+  'emoji 摘要没有孤立代理项',
+  loneSurrogate.test(emoji.excerpt),
+  (v) => v === false,
+  'excerpt 按码元切了：emoji 被劈成半个',
+)
+expect(
+  'emoji 摘要按码点截到 120',
+  Array.from(emoji.excerpt.replace(/…$/, '')).length,
+  (v) => v === 120,
+  String(Array.from(emoji.excerpt).length),
+)
 
 // 归档区与回收站同样是「只增不减」的部分，一样不能整段传正文
 expect('归档视图有一条', snapshot.archived.length, (v) => v === 1, String(snapshot.archived.length))

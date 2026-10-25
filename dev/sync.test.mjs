@@ -10,6 +10,7 @@ import path from 'node:path'
 import { mergeStates, normalizeSync, syncNow } from '../lib/sync.js'
 
 const files = new Map()
+let putCount = 0
 
 const server = http.createServer((req, res) => {
   const key = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname)
@@ -31,6 +32,7 @@ const server = http.createServer((req, res) => {
       body += chunk
     })
     req.on('end', () => {
+      putCount += 1
       const existed = files.has(key)
       files.set(key, body)
       res.writeHead(existed ? 204 : 201).end()
@@ -141,6 +143,14 @@ await it('A 删除一条后，墓碑会把 B 那边的同一条也删掉', async
   assert.equal(result.status, 'ok', result.message)
   const localB = await readLocal(deviceB)
   assert.deepEqual(localB.items.map((entry) => entry.id), ['m2'], 'B 那边 m1 也应消失')
+})
+
+await it('本地没有变化时不再整份上传（省流量）', async () => {
+  const before = putCount
+  const result = await syncNow(opts(deviceA))
+  assert.equal(result.status, 'ok', result.message)
+  assert.equal(result.message, '已是最新', `远端与本地一致时应跳过上传，实际：${result.message}`)
+  assert.equal(putCount, before, `无变化不应 PUT，实际多传了 ${putCount - before} 次`)
 })
 
 await it('远端不是合法 JSON 时中止，不会覆盖本地', async () => {
