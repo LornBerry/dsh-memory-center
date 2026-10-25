@@ -207,6 +207,14 @@ expect(
   (v) => v === 120,
   String(Array.from(emoji.excerpt).length),
 )
+// 直接盯着截断点本身：末位若是高代理，说明它的低代理被切掉了
+const tailCode = emoji.excerpt.charCodeAt(emoji.excerpt.length - 1)
+expect(
+  'emoji 摘要截断点不落在代理对中间',
+  tailCode >= 0xd800 && tailCode <= 0xdbff,
+  (v) => v === false,
+  `末位 charCode 0x${tailCode.toString(16)}`,
+)
 
 // 归档区与回收站同样是「只增不减」的部分，一样不能整段传正文
 expect('归档视图有一条', snapshot.archived.length, (v) => v === 1, String(snapshot.archived.length))

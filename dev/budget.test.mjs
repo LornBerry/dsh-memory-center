@@ -133,6 +133,21 @@ expect('非法阈值被拒', invalid.ok, (v) => v === false, '超出 0.1–1 应
 const restored = await call({ op: 'budget.set', ratio: 0.8 })
 expect('改回 0.8', restored.injection.softLimit, (v) => v === 2000, '恢复默认压缩线')
 
+// 压缩比必须真的生效：v0.10.8 的索引清单预算是从硬上限（MAX）抠的，正文按压缩线装完、
+// 剩下的差额全被清单吃满，于是滑杆从 80% 拖到 30%，注入长度一动不动（都在 11900 上下）。
+const ratio03 = await call({ op: 'budget.set', ratio: 0.3 })
+expect('阈值 0.3 时压缩线', ratio03.injection.softLimit, (v) => v === 1000, '压缩线有 1000 字下限')
+const soft03 = ratio03.injection.softLimit
+// budget.set 只回快照统计，不带 preview，要另取一次 state
+const state03 = await call({ op: 'state', sessionId })
+expect(
+  '阈值 0.3 时注入压到压缩线以内',
+  state03.preview.length <= soft03,
+  (v) => v === true,
+  `实际 ${state03.preview.length} 字符 / 压缩线 ${soft03}（吃满硬上限就是 2500）`,
+)
+await call({ op: 'budget.set', ratio: 0.8 })
+
 // 长标题不得把索引清单撑破：原先只限 40 条、不限标题长度，最后靠 slice 硬截断，
 // 截断点会落在清单中间（半行）。现在按剩余预算逐条装，标题先按码点 clip 到 60。
 for (const entry of created) {

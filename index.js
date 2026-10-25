@@ -818,10 +818,12 @@ function syncEnabled() {
 function schedulePush() {
   if (!syncEnabled() || !sync.autoPush) return
   if (pushTimer) clearTimeout(pushTimer)
+  // 12 秒：一次同步要起好几个 git 子进程（Windows 上尤其慢），4 秒防抖等于
+  // 「刚跑完就又被叫起来」。拖长一点，连续编辑时只在停下来后同步一次。
   pushTimer = setTimeout(() => {
     pushTimer = null
     void runSyncNow({ quiet: true })
-  }, 4000)
+  }, 12000)
   if (typeof pushTimer.unref === 'function') pushTimer.unref()
 }
 
@@ -854,6 +856,8 @@ async function mergeRemote(remoteStore) {
 }
 
 let syncing = null
+/** 同步进行中又来了改动：结束时需要再补跑一次，否则这次推送被吞掉。 */
+let syncPending = false
 
 /** 上一次「安静拉取」的时间：面板打开、定时器都会走它，节流避免频繁打远端。 */
 let quietPullAt = 0
@@ -863,7 +867,12 @@ async function runSyncNow({ quiet = false } = {}) {
   if (!syncEnabled()) {
     return { status: 'skipped', message: '同步未启用' }
   }
-  if (syncing) return syncing
+  if (syncing) {
+    // 同步进行中又来了新改动：直接复用旧 promise 会把这次推送吞掉（这次改动没上去，也不会补跑），
+    // 另一台设备就永远少一条。记下来，等当前这轮结束后再补跑一次。
+    syncPending = true
+    return syncing
+  }
   syncing = (async () => {
     const result = await runSync({
       dir: DATA_DIR,
@@ -890,6 +899,14 @@ async function runSyncNow({ quiet = false } = {}) {
     return await syncing
   } finally {
     syncing = null
+    // 期间有新改动：补跑一轮，别让那次推送被旧 promise 吞掉。
+    if (syncPending) {
+      syncPending = false
+      const timer = setTimeout(() => {
+        void runSyncNow({ quiet: true })
+      }, 500)
+      if (typeof timer.unref === 'function') timer.unref()
+    }
   }
 }
 
@@ -971,9 +988,18 @@ function costOf(item, topic) {
  * 这里先按码点裁标题，保证每条索引给定预算内的长度可控。
  */
 const INDEX_TITLE_CHARS = 60
+const INDEX_TAGS_CHARS = 40
+/** 按码点裁到 max 字，超长补省略号：直接 slice 会把 emoji 劈成半个字符。 */
+function clipText(text, max) {
+  const runes = Array.from(String(text ?? ''))
+  return runes.length > max ? `${runes.slice(0, max).join('')}…` : runes.join('')
+}
 function clipTitle(title) {
-  const runes = Array.from(String(title ?? ''))
-  return runes.length > INDEX_TITLE_CHARS ? `${runes.slice(0, INDEX_TITLE_CHARS).join('')}…` : runes.join('')
+  return clipText(title, INDEX_TITLE_CHARS)
+}
+/** 索引行里的标签也吃长度：一个两百字的标签足够把整行预算吃光。 */
+function clipTags(tags) {
+  return tags && tags.length ? clipText(tags.join(' / '), INDEX_TAGS_CHARS) : ''
 }
 
 /** 同主题分组的缓存：快照一次请求里 capacityOf 与 composeInjection 会各要一次，别重复算。 */
@@ -1130,10 +1156,14 @@ function composeInjection(state, sessionId) {
     // 最后只能靠硬截断兜底（截在清单中间）。这里按剩余预算实时裁剪标题，
     // 放不下的只报总数，正文与清单都不会被从中间截断。
     const tailReserve = 90 // 结尾那句「需要上述任何一条…」+「……共 N 条」的余量
-    let indexBudget = MAX_INJECT_CHARS - blocks.join('\n').length - tailReserve
+    // 预算从压缩线（SOFT）抠，不是从硬上限（MAX）抠：正文已经按 SOFT 装完，剩下的余量才是
+    // 索引清单的，这样总量永远落在用户设的压缩阈值以内。从 MAX 抠会让清单把差额吃满，
+    // 压缩滑杆从 80% 拖到 30% 注入长度一动不动，用户以为在省 token 其实一点没省。
+    let indexBudget = SOFT_INJECT_CHARS - blocks.join('\n').length - tailReserve
     const titles = []
     for (const item of dropped) {
-      const line = `- ${clipTitle(item.title)}${item.tags.length ? `  〔${item.tags.join(' / ')}〕` : ''}`
+      const tagText = clipTags(item.tags)
+      const line = `- ${clipTitle(item.title)}${tagText ? `  〔${tagText}〕` : ''}`
       if (indexBudget - line.length - 1 < 0) break
       titles.push(line)
       indexBudget -= line.length + 1
@@ -1305,12 +1335,33 @@ function recycleView(state) {
  * 面板一打开就要列出全部记忆，把每条几百字的正文一起塞过去，几百条就是几十 KB，
  * 这些字节只为了渲染卡片上那两行。正文改成点开编辑 / 看详情时用 item.get 单独取。
  */
+const EXCERPT_CHARS = 120
+/**
+ * 摘要按码点截到 120 字，且只扫到第 120 个码点就停（最多 240 个码元）。
+ *
+ * 不能直接 slice：slice 按 UTF-16 码元切，正文开头是 emoji 时会劈成半个字符，面板显示成乱码方块。
+ * 但也不能 Array.from(body).slice(0, 120)：那是对整段正文做一遍码点迭代，再分配一个和正文等长的
+ * 数组再 join，一万条 400 字正文就是每次构造 400 万元素——为了截 120 个字，把整轮优化的收益吃回去。
+ * 这里单遍扫描、到第 120 个码点就停，遇到代理对整体跳过 2 个码元。
+ */
+function excerptOf(body, limit = EXCERPT_CHARS) {
+  const text = String(body ?? '')
+  if (text.length <= limit) return text
+  let end = 0
+  let count = 0
+  while (end < text.length && count < limit) {
+    const code = text.charCodeAt(end)
+    const paired = code >= 0xd800 && code <= 0xdbff && (text.charCodeAt(end + 1) & 0xfc00) === 0xdc00
+    end += paired ? 2 : 1
+    count += 1
+  }
+  return text.slice(0, end)
+}
+
 function slimItem(item) {
   const body = String(item.body ?? '')
   const { body: _omitted, ...rest } = item
-  // 按码点截，不用 slice：slice 按 UTF-16 码元切，正文开头是 emoji 时会劈成半个字符，
-  // 面板拼接后显示成乱码方块。Array.from 按码点迭代，切完仍是完整字符。
-  return { ...rest, excerpt: Array.from(body).slice(0, 120).join(''), bodyChars: body.length }
+  return { ...rest, excerpt: excerptOf(body), bodyChars: body.length }
 }
 
 function snapshot(state, sessionId, extra) {

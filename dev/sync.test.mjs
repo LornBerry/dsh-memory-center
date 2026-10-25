@@ -10,7 +10,11 @@ import path from 'node:path'
 import { mergeStates, normalizeSync, syncNow } from '../lib/sync.js'
 
 const files = new Map()
+const etags = new Map()
+let etagSeq = 0
 let putCount = 0
+let lastPutIfMatch = null
+let rejectNextPut = false
 
 const server = http.createServer((req, res) => {
   const key = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname)
@@ -23,7 +27,10 @@ const server = http.createServer((req, res) => {
       res.writeHead(404).end('not found')
       return
     }
-    res.writeHead(200, { 'content-type': 'application/json' }).end(files.get(key))
+    const etag = etags.get(key)
+    res
+      .writeHead(200, { 'content-type': 'application/json', ...(etag ? { etag } : {}) })
+      .end(files.get(key))
     return
   }
   if (req.method === 'PUT') {
@@ -32,9 +39,24 @@ const server = http.createServer((req, res) => {
       body += chunk
     })
     req.on('end', () => {
-      putCount += 1
+      // 模拟「我们合并完到 PUT 之间，另一台设备抢先写了」：这次回 412，重试才会成功
+      if (rejectNextPut) {
+        rejectNextPut = false
+        etags.set(key, `"v${++etagSeq}"`)
+        res.writeHead(412).end('precondition failed')
+        return
+      }
       const existed = files.has(key)
+      const current = etags.get(key)
+      const ifMatch = req.headers['if-match']
+      if (ifMatch && current && ifMatch !== current) {
+        res.writeHead(412).end('precondition failed')
+        return
+      }
+      putCount += 1
+      lastPutIfMatch = ifMatch || null
       files.set(key, body)
+      etags.set(key, `"v${++etagSeq}"`)
       res.writeHead(existed ? 204 : 201).end()
     })
     return
@@ -151,6 +173,34 @@ await it('本地没有变化时不再整份上传（省流量）', async () => {
   assert.equal(result.status, 'ok', result.message)
   assert.equal(result.message, '已是最新', `远端与本地一致时应跳过上传，实际：${result.message}`)
   assert.equal(putCount, before, `无变化不应 PUT，实际多传了 ${putCount - before} 次`)
+})
+
+await it('上传带 If-Match：远端有 ETag 时不会盲写覆盖', async () => {
+  const localA = await readLocal(deviceA)
+  await writeLocal(deviceA, {
+    ...localA,
+    items: [...localA.items, item('m3', 'A 新写', '2026-01-05T00:00:00.000Z')],
+  })
+  lastPutIfMatch = null
+  const result = await syncNow(opts(deviceA))
+  assert.equal(result.status, 'ok', result.message)
+  assert.ok(
+    lastPutIfMatch,
+    'PUT 应带 If-Match：否则两台设备并发同步时，后到的整份覆盖会静默抹掉对方刚写入的条目',
+  )
+})
+
+await it('远端在合并期间被改：第一次 412，重试后成功', async () => {
+  const localA = await readLocal(deviceA)
+  await writeLocal(deviceA, {
+    ...localA,
+    items: [...localA.items, item('m4', 'A 又写', '2026-01-06T00:00:00.000Z')],
+  })
+  rejectNextPut = true
+  const before = putCount
+  const result = await syncNow(opts(deviceA))
+  assert.equal(result.status, 'ok', result.message)
+  assert.equal(putCount, before + 1, '412 那次不算上传，重试那次才成功')
 })
 
 await it('远端不是合法 JSON 时中止，不会覆盖本地', async () => {
