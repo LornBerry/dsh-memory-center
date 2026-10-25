@@ -203,6 +203,21 @@ await it('远端在合并期间被改：第一次 412，重试后成功', async 
   assert.equal(putCount, before + 1, '412 那次不算上传，重试那次才成功')
 })
 
+await it('弱 ETag 不放进 If-Match：否则 412 死循环，WebDAV 同步整个不可用', async () => {
+  const localA = await readLocal(deviceA)
+  await writeLocal(deviceA, {
+    ...localA,
+    items: [...localA.items, item('m5', 'A 再写', '2026-01-07T00:00:00.000Z')],
+  })
+  // 模拟 CDN / 反向代理 / 老版本 Nextcloud：只给弱 ETag。RFC 7232 的 If-Match 是强比较，
+  // W/ 前缀永远不匹配，带上去就是 412 → 重试还是 412 → 报错，用户再点多少次都一样。
+  etags.set('/dav/memory/store.json', 'W/"weak-1"')
+  lastPutIfMatch = null
+  const result = await syncNow(opts(deviceA))
+  assert.equal(result.status, 'ok', result.message)
+  assert.equal(lastPutIfMatch, null, '弱 ETag 不能用于 If-Match，应退回无条件 PUT')
+})
+
 await it('远端不是合法 JSON 时中止，不会覆盖本地', async () => {
   files.set('/dav/memory/store.json', '{ 坏掉的 json')
   const before = await readLocal(deviceA)

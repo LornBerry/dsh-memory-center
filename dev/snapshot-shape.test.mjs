@@ -216,6 +216,28 @@ expect(
   `末位 charCode 0x${tailCode.toString(16)}`,
 )
 
+// WebDAV 密码存在 config.json 里，绝不该出现在响应体：sync.get 与每个 state 快照都要脱敏。
+// 先设一个密码，再确认两处都只回 passwordSet。
+await call({
+  op: 'sync.set',
+  patch: { mode: 'webdav', remote: 'http://127.0.0.1:9/dav', username: 'u', password: 'secret-pw', autoPull: false },
+})
+const syncState = await call({ op: 'sync.get' })
+expect(
+  'sync.get 不回传明文密码',
+  syncState.sync.password,
+  (v) => v === undefined,
+  `回传了 password=${String(syncState.sync.password)}`,
+)
+expect('sync.get 用 passwordSet 告知存过密码', syncState.sync.passwordSet, (v) => v === true, String(syncState.sync.passwordSet))
+const afterSync = await call({ op: 'state' })
+expect(
+  'state 快照的 sync 也不带明文密码',
+  afterSync.sync.password,
+  (v) => v === undefined,
+  '每个 /op 响应都带一次密码，进 devtools 就能看到',
+)
+
 // 归档区与回收站同样是「只增不减」的部分，一样不能整段传正文
 expect('归档视图有一条', snapshot.archived.length, (v) => v === 1, String(snapshot.archived.length))
 expect(

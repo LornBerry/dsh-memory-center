@@ -83,11 +83,11 @@
 - 三选一后端：`off` / `git`（任意 Git 远端，含 GitHub 私有仓库、Gitee、自建）/ `webdav`（坚果云、Nextcloud、群晖）。
 - 合并粒度是**单条记忆**：按 `id` + `updatedAt` 取新的；删除写墓碑（`store.json` 的 `deleted[]`），不会在另一台设备上复活；文件夹取并集，冲突以本机为准。
 - Git 后端：影子仓库在 `<数据目录>/.git-sync/repo`，`config.json` 与 `sessions.json` 不入库；先取远端 → 本地合并 → `reset --soft` 对齐远端 tip → 提交 → 推送，因此推送总是 fast-forward，不产生 git 文本冲突。
-- WebDAV 后端：`MKCOL` 建目录 → `GET store.json`（记下 `ETag`）→ 合并 → `PUT` 带 `If-Match`；远端内容不是合法 JSON 时中止并报错，不覆盖；合并后与远端完全一致时跳过 `PUT`，不整份重传；合并期间远端被改（`412`）时中止并重试一次，避免两台设备并发时后到的整份覆盖静默丢条目。
+- WebDAV 后端：`MKCOL` 建目录 → `GET store.json`（记下 `ETag`）→ 合并 → `PUT` 带 `If-Match`；远端内容不是合法 JSON 时中止并报错，不覆盖；合并后与远端完全一致时跳过 `PUT`，不整份重传；合并期间远端被改（`412`）时中止并重试一次，避免两台设备并发时后到的整份覆盖静默丢条目；弱 `ETag`（`W/` 前缀）不放进 `If-Match`（RFC 7232 要求强比较，带上去只会 412 死循环），退回无条件 `PUT` 并接受 last-write-wins。
 - 每次手动 / 自动同步都记录 `lastSyncAt` / `lastSyncStatus` / `lastSyncError`：`lastSyncAt` 只在成功时推进（它是增量合并的 `since`，失败时前进会漏合并），失败也写状态与错误并落盘，所以自动同步静默失败也能在面板看到。
 - 同步是单飞的：一次同步进行中又产生改动时，不会把这次请求并进正在跑的那次（那样改动既不上传也不补跑），而是记下「还有新改动」，等这次结束后 0.5 秒自动补跑一次。
-- `autoPull`（打开面板时拉取）/ `autoPush`（改动后 12 秒自动推，防抖：连续改动只推最后一次）都可关；另有「立即同步」。
-- 同步设置存在 `<数据目录>/config.json` 的 `sync` 字段（WebDAV 账号密码为明文，属本机文件）。
+- `autoPull`（打开面板时拉取）/ `autoPush`（改动后 12 秒自动推，防抖：连续改动只推最后一次；连续编辑不断时最多攒 60 秒必推一次，不会因为一直在改就永远不推）都可关；另有「立即同步」。会话结束时若还有排队的推送，就地补推一次。
+- 同步设置存在 `<数据目录>/config.json` 的 `sync` 字段（WebDAV 账号密码为明文，属本机文件）；但接口与每个 `state` 快照都只回 `passwordSet`、不回密码原文（否则每个 `/op` 响应都明文传一次密码），面板里密码留空即保持原密码不变。
 
 ### F10 首装引导（v1.3，用户追加需求）
 - 数据目录里还没有任何记忆（`store.json` 为空或不存在）时，首次加载除两条说明外，再在「未归类 + 待确认」留一条提醒：标题「跨设备记忆需要开同步」，说明开同步的位置与「不绑定也能用」。
@@ -209,7 +209,8 @@
 | AC33 | 记忆正文里的 markdown 链接只渲染 `http`/`https`/`mailto`，其它协议（含 `file:`）降级为纯文本 | `node dev/smoke-client.mjs` |
 | AC34 | `state` 快照的 `items` / `archived` / `deleted` 三类列表都只带 `excerpt`（正文前 120 字，按码点截断，emoji 不会被劈成半个代理对，并且只扫到第 120 个码点就停、不对整段正文做码点迭代）与 `bodyChars`，不带 `body`；归档与回收站条目仍可用 `item.get` 取全文，`archiveView` 的 `chars` 仍按原文长度算 | `node dev/snapshot-shape.test.mjs` |
 | AC35 | 压缩线是注入总量的预算（索引清单也从压缩线里装）：阈值拖到 0.3 时注入长度跟着压到 0.3 × 上限以内，不再出现「怎么拖都是 11900」 | `node dev/budget.test.mjs` |
-| AC36 | WebDAV 上传带 `If-Match`：合并期间远端被改（412）时中止并重试一次；同步进行中产生的新改动会在本次结束后补跑一次，不会被吞掉 | `node dev/sync.test.mjs` + 手动 |
+| AC36 | WebDAV 上传带 `If-Match`：合并期间远端被改（412）时中止并重试一次；弱 `ETag`（`W/` 开头）不放进 `If-Match`；同步进行中产生的新改动会在本次结束后补跑一次，不会被吞掉 | `node dev/sync.test.mjs` + 手动 |
+| AC37 | 自动推送是「12 秒防抖 + 最长 60 秒必推」：连续编辑不断时最多 60 秒必推一次，不会永远不推；同步接口与每个 `state` 快照都不回密码原文，只回 `passwordSet` | `node dev/snapshot-shape.test.mjs` + 手动 |
 
 ### F18 导出格式演进规则（v0.9.9，评审建议）
 

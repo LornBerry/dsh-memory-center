@@ -196,6 +196,7 @@ let autoDir = ''
 let sync = normalizeSync(null)
 let gitOk = null
 let pushTimer = null
+let pushDueAt = 0
 
 function configFileFor(dir) {
   return path.join(dir, 'config.json')
@@ -815,15 +816,35 @@ function syncEnabled() {
   return (sync.mode === 'git' || sync.mode === 'webdav') && Boolean(sync.remote)
 }
 
+/**
+ * 给面板看的同步状态：绝不带 password。
+ * 原来两处都是 `{ ...sync }` 直出，而 sync 里存着 WebDAV 明文密码——
+ * 于是每个 /op 的 state 响应体（不只是 sync.get）都明文传一次，进 devtools 就能看到。
+ * 面板只需要知道「存过没」，改密码时留空即保留。
+ */
+function publicSync() {
+  const { password, ...rest } = sync
+  return { ...rest, passwordSet: Boolean(password) }
+}
+
+const PUSH_DEBOUNCE = 12000
+const PUSH_MAX_WAIT = 60000
+
 function schedulePush() {
   if (!syncEnabled() || !sync.autoPush) return
   if (pushTimer) clearTimeout(pushTimer)
-  // 12 秒：一次同步要起好几个 git 子进程（Windows 上尤其慢），4 秒防抖等于
-  // 「刚跑完就又被叫起来」。拖长一点，连续编辑时只在停下来后同步一次。
+  // 12 秒防抖：一次同步要起好几个 git 子进程（Windows 上尤其慢），4 秒防抖等于
+  // 「刚跑完就又被叫起来」。但纯 debounce 有个死角：编辑间隔只要一直小于 12 秒，
+  // 计时器就被无限重置——边聊边写记忆、连续拖文件夹时，用户可能一小时都不同步，
+  // 换台设备看到的是旧库。所以再压一个最长等待：连续编辑时最多攒 60 秒必推一次。
+  const now = Date.now()
+  if (!pushDueAt) pushDueAt = now + PUSH_MAX_WAIT
+  const delay = Math.max(0, Math.min(PUSH_DEBOUNCE, pushDueAt - now))
   pushTimer = setTimeout(() => {
     pushTimer = null
+    pushDueAt = 0
     void runSyncNow({ quiet: true })
-  }, 12000)
+  }, delay)
   if (typeof pushTimer.unref === 'function') pushTimer.unref()
 }
 
@@ -1371,7 +1392,7 @@ function snapshot(state, sessionId, extra) {
   return {
     ok: true,
     dataDir: DATA_DIR,
-    sync: { ...sync },
+    sync: publicSync(),
     gitAvailable: gitOk !== false,
     ...extra,
     groups: sortGroups(state.groups),
@@ -1903,7 +1924,7 @@ async function runOp(op, payload) {
     }
 
     case 'sync.get': {
-      return { ok: true, sync: { ...sync }, dataDir: DATA_DIR, gitAvailable: await hasGit() }
+      return { ok: true, sync: publicSync(), dataDir: DATA_DIR, gitAvailable: await hasGit() }
     }
 
     case 'sync.set': {
@@ -2916,6 +2937,14 @@ export function apply(ctx) {
     if (sessionId) {
       lastInjected.delete(sessionId)
       sessionTitles.delete(sessionId)
+    }
+    // 计时器都 unref 过：宿主退出时它直接被丢掉，本地改动得等下次启动才推。
+    // 会话结束时若还有排队的推送，就地补一次（失败不打扰，下次启动还会再来）。
+    if (pushTimer) {
+      clearTimeout(pushTimer)
+      pushTimer = null
+      pushDueAt = 0
+      void runSyncNow({ quiet: true }).catch(() => {})
     }
   })
 

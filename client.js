@@ -1558,7 +1558,9 @@ window.__ModuleLoader__.load({
       const [remote, setRemote] = useState(info.remote || '')
       const [branch, setBranch] = useState(info.branch || 'main')
       const [username, setUsername] = useState(info.username || '')
-      const [password, setPassword] = useState(info.password || '')
+      // 密码不回填：后端只回 passwordSet，不回明文（每个 /op 响应都带一次密码太没必要）。
+      // 留空 = 保持原密码不变，要换就重新输入。
+      const [password, setPassword] = useState('')
       const [autoPull, setAutoPull] = useState(info.autoPull !== false)
       const [autoPush, setAutoPush] = useState(info.autoPush !== false)
       const [busy, setBusy] = useState(false)
@@ -1599,7 +1601,16 @@ window.__ModuleLoader__.load({
 
       const save = () =>
         run((payload) => api('sync.set', payload), {
-          patch: { mode, remote: remote.trim(), branch: branch.trim() || 'main', username, password, autoPull, autoPush },
+          patch: {
+            mode,
+            remote: remote.trim(),
+            branch: branch.trim() || 'main',
+            username,
+            // 留空就不放进 patch：后端 normalizeSync 会保留原密码。
+            ...(password ? { password } : {}),
+            autoPull,
+            autoPush,
+          },
         })
 
       const syncNow = () => run(() => api('sync.now'))
@@ -1699,10 +1710,17 @@ window.__ModuleLoader__.load({
                     className: 'dmc-input',
                     type: 'password',
                     value: password,
+                    placeholder: info.passwordSet ? '已保存，留空则不修改' : '粘贴应用密码',
                     autoComplete: 'new-password',
                     onChange: (event) => setPassword(event.target.value),
                   }),
-                  h('div', { className: 'dmc-card-hint' }, '账号密码会存在本机 config.json 里（明文）。坚果云要去「安全选项」生成应用密码。'),
+                  h(
+                    'div',
+                    { className: 'dmc-card-hint' },
+                    info.passwordSet
+                      ? '密码已保存在本机 config.json（明文），面板不再回传。留空保持原密码，想换就重新输入。'
+                      : '账号密码会存在本机 config.json 里（明文）。坚果云要去「安全选项」生成应用密码。',
+                  ),
                 )
               : null,
             mode !== 'off'
