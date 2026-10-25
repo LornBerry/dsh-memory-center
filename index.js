@@ -188,6 +188,9 @@ const PLUGIN_ID = 'dsh-memory-center'
  * 文件夹里，不会因为默认目录在 C 盘就往 C 盘写配置。
  */
 let DATA_DIR = ''
+// 这台机器是否已经播过首装样例。存 config.json 的 seeded：只写本机、不参与同步，
+// 所以「删光后重启又长回来」和「两台设备各播一份、同步后翻倍」都能按它收敛。
+let SEEDED = false
 let STORE_FILE = ''
 let SESSIONS_FILE = ''
 let CONFIG_FILE = ''
@@ -398,6 +401,8 @@ async function loadConfig() {
   SESSION_DEFAULT = normalizeSessionDefault(config.sessionDefault)
   // 全局暂停注入：临时不想让任何记忆进上下文时用，不影响库里的数据。
   INJECTION_PAUSED = config.paused === true
+  // 首装样例只播种一次：删光库以后重启不再自动长回来，同步也不参与（config.json 不入远端）。
+  SEEDED = config.seeded === true
   // 回收站保留天数：面板选过就用面板的，环境变量优先。
   if (ENV_RECYCLE_DAYS === null && config.recycleDays !== undefined && config.recycleDays !== null) {
     RECYCLE_KEEP_DAYS = parseRecycleDays(config.recycleDays)
@@ -723,9 +728,16 @@ async function ensureLoaded() {
         await persist()
         await persistSessions()
       }
-      if (!store.groups.length && !store.items.length) {
+      // 只在「这台机器从没播过种、且库是空的」时播一次。老安装的库已经有数据，
+      // 直接记下 seeded，免得用户删光以后重启又被塞回 3 条样例。
+      if (!SEEDED && !store.groups.length && !store.items.length) {
         store = seedState()
+        SEEDED = true
         await persist()
+        await saveConfig(DATA_DIR, { seeded: true }).catch(() => {})
+      } else if (!SEEDED) {
+        SEEDED = true
+        await saveConfig(DATA_DIR, { seeded: true }).catch(() => {})
       }
       return store
     })().catch((error) => {
@@ -740,11 +752,13 @@ async function ensureLoaded() {
 
 function seedState() {
   const state = emptyState()
-  const groupId = `g-${randomUUID().slice(0, 8)}`
+  // 种子用固定 id：两台设备各自播种时合并能按 id 对齐，文件夹也只留一个。
+  // updatedAt 仍是各自的本机时间，合并取新者赢，内容不变。
+  const groupId = 'g-seed'
   state.groups.push({ id: groupId, name: '项目约定', order: 0, createdAt: nowIso() })
   state.items.push(
     {
-      id: `m-${randomUUID().slice(0, 8)}`,
+      id: 'm-seed-1',
       title: '记忆库是一个本地文件夹',
       body: '记忆只存在本机的一个目录里，路径见「记忆」面板底部，可随时在「存储位置」里改到别处；不会写进项目代码目录。',
       tags: ['约束', '存储'],
@@ -758,7 +772,7 @@ function seedState() {
       updatedAt: nowIso(),
     },
     {
-      id: `m-${randomUUID().slice(0, 8)}`,
+      id: 'm-seed-2',
       title: '记忆由用户最终确认',
       body: '模型写入的记忆先进入「待确认」，用户点「转正」后才进入正式库并参与注入。',
       tags: ['流程'],
@@ -774,7 +788,7 @@ function seedState() {
     {
       // 新装首启的一次性引导：放「待确认」，不参与注入，用户看完随手删掉也不会
       // 丢掉绑定入口——「云端同步」按钮独立在面板工具栏和设置页里，不依赖这一条。
-      id: `m-${randomUUID().slice(0, 8)}`,
+      id: 'm-seed-3',
       title: '跨设备记忆需要开同步',
       body: '想让多台设备共用同一份记忆，得先绑定云端同步：记忆面板（或 设置 → 记忆库）工具栏点「云端同步」，选 Git 仓库或 WebDAV 网盘保存即可。不绑定也完全能用，记忆只留在这台机器。这条只是首装提醒，转正或删除都随意——「云端同步」入口一直都在，删了它也能随时回去绑。',
       tags: ['同步'],
