@@ -402,7 +402,9 @@ async function loadConfig() {
   // 全局暂停注入：临时不想让任何记忆进上下文时用，不影响库里的数据。
   INJECTION_PAUSED = config.paused === true
   // 首装样例只播种一次：删光库以后重启不再自动长回来，同步也不参与（config.json 不入远端）。
-  SEEDED = config.seeded === true
+  // 标记只认当前数据目录自己的 config.json：切到另一个空目录时那边没有标记，仍会正常播种。
+  const dirConfig = await readConfigFile(configFileFor(DATA_DIR))
+  SEEDED = dirConfig.seeded === true
   // 回收站保留天数：面板选过就用面板的，环境变量优先。
   if (ENV_RECYCLE_DAYS === null && config.recycleDays !== undefined && config.recycleDays !== null) {
     RECYCLE_KEEP_DAYS = parseRecycleDays(config.recycleDays)
@@ -470,6 +472,26 @@ async function saveConfig(dir, patch = {}) {
     await fs.rename(temp, target)
   }
   CONFIG_FILE = configFileFor(dir)
+}
+
+/**
+ * 只记「这台机器在这个数据目录播过种」。不能走 saveConfig：它会把 CONFIG_FILE
+ * 改写成 `<dir>/config.json`，而在 DSH_MEMORY_CONFIG 指到别处的场景下那等于把指针丢掉。
+ * 标记只写当前数据目录自己的 config.json，删光库后重启才不会又把样例塞回来。
+ */
+async function rememberSeeded() {
+  SEEDED = true
+  const file = configFileFor(DATA_DIR)
+  try {
+    const current = await readConfigFile(file)
+    const next = { ...current, seeded: true }
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    const temp = `${file}.${process.pid}.tmp`
+    await fs.writeFile(temp, `${JSON.stringify(next, null, 2)}\n`, 'utf8')
+    await fs.rename(temp, file)
+  } catch {
+    // 写标记失败不该影响记忆功能本身，最多下次重启再判断一次。
+  }
 }
 
 /**
@@ -732,12 +754,10 @@ async function ensureLoaded() {
       // 直接记下 seeded，免得用户删光以后重启又被塞回 3 条样例。
       if (!SEEDED && !store.groups.length && !store.items.length) {
         store = seedState()
-        SEEDED = true
+        await rememberSeeded()
         await persist()
-        await saveConfig(DATA_DIR, { seeded: true }).catch(() => {})
       } else if (!SEEDED) {
-        SEEDED = true
-        await saveConfig(DATA_DIR, { seeded: true }).catch(() => {})
+        await rememberSeeded()
       }
       return store
     })().catch((error) => {
