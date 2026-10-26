@@ -255,6 +255,19 @@ node dev/release.mjs            # 自测 + 升版本 + 打包，打印 install_b
   node dev/search-regression.test.mjs # 检索效果回归集：22 条真实记忆 + 26 个查询，改了分词/权重/同义词必须跑
   node dev/render-bench.mjs 2000      # 渲染基准（只报数字，不断言）：2000 条时面板单次渲染耗时
   ```
+- 运行时体检（DSH 开着的时候跑；只读，不改任何记忆）：
+
+  ```bash
+  node dev/patrol.mjs --url http://127.0.0.1:<port>
+  ```
+
+  检查接口可达、快照不带 body、注入预算自洽、`lastInject` 字段、数据目录可写、`store.json` 存在、`sync.get` 不回传明文密码。输出 `PATROL OK` 表示运行期全绿；任一项 FAIL 退出码非 0。
+- 宿主升级后自检（换了 DSH 版本、或装完插件面板打不开时，按这个顺序查）：
+  1. `node dev/doctor.mjs --url <port>` → `DOCTOR OK`（版本、四文件哈希、接口、数据目录）
+  2. `node dev/patrol.mjs --url <port>` → `PATROL OK`（运行期契约）
+  3. 页面上：侧栏「记忆」能开、设置 → 记忆库 能开、搜索能命中、新会话弹「选记忆」卡片
+  4. 对话里：选「全部」后第一轮出现 `〔记忆快照 #N〕`；改一条记忆后下一轮出现 `〔记忆更新 #N〕`；不改动则不再重复注入
+  5. 注入链路本身由 `node dev/recall.test.mjs` 离线覆盖，升级后跑一次即可
 - 接口自测（端口换成你当前 DSH Web GUI 的端口）：
 
   ```bash
